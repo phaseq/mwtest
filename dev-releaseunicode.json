@@ -1,0 +1,4 @@
+{
+	"verifier": "5axis/test/verifiertest/mwVerifierTest.exe",
+	"verifier-dll": "5axis/customer/quickstart/mwVerifier.dll"
+}

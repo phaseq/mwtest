@@ -1,14 +1,19 @@
 extern crate clap;
-extern crate indicatif;
 extern crate regex;
+extern crate termion;
 extern crate uuid;
 use clap::{App, Arg, SubCommand};
 use regex::Regex;
 use std::collections::HashMap;
-use std::fs::{self, DirEntry};
-use std::io;
+use std::fs::{self, DirEntry, File};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_json;
 
 fn test_input_paths(path: &Path, file_ext: &str) -> Vec<DirEntry> {
     fn glob_recursive(path: &Path, file_ext: &str, cb: &mut FnMut(DirEntry)) -> io::Result<()> {
@@ -62,10 +67,11 @@ fn test_inputs(paths: &Vec<DirEntry>, root_dir: &Path, pattern: &str) -> Vec<Tes
 
 #[derive(Debug)]
 struct InputPaths {
+    exe_paths: HashMap<String, String>,
     testcases_dir: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Deserialize)]
 struct TestGroup {
     rel_dir: PathBuf,
     file_ext: String,
@@ -77,19 +83,19 @@ fn to_inputs(input_paths: &InputPaths, test_group: &TestGroup) -> Vec<TestInput>
     test_inputs(&paths, &input_paths.testcases_dir, &test_group.id_pattern)
 }
 
-fn cmd_list(input_paths: &InputPaths, test_group: &TestGroup) {
-    for input in to_inputs(input_paths, test_group) {
-        println!("verifier --id {}", input.id);
+fn cmd_list(input_paths: &InputPaths, test_apps: &Vec<TestApp>) {
+    for test_app in test_apps {
+        for test_group in &test_app.test_groups {
+            for input in to_inputs(input_paths, &test_group) {
+                println!("{} --id {}", test_app.name, input.id);
+            }
+        }
     }
 }
 
 #[derive(Debug)]
-struct BuildPaths {
-    exe_paths: HashMap<String, String>,
-}
-#[derive(Debug)]
 struct OutputPaths {
-    tmp_dir: String,
+    tmp_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -100,32 +106,52 @@ struct TestCommand {
 }
 type CommandGenerator = Fn() -> TestCommand;
 
-fn generate_verifier_command(
-    build_paths: &BuildPaths,
-    tmp_root: PathBuf,
-    input_path: String,
-    cwd: String,
-) -> Box<CommandGenerator> {
-    let verifier_exe = build_paths.exe_paths["verifier"].clone();
-    let verifier_dll = build_paths.exe_paths["verifier-dll"].clone();
-    Box::new(move || {
-        let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
-        let tmp_path = tmp_dir.to_string_lossy().to_string();
-        //std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
-        TestCommand {
-            command: vec![
-                verifier_exe.clone(),
-                "--config".to_string(),
-                input_path.clone(),
-                "--verifier".to_string(),
-                verifier_dll.clone(),
-                "--out-dir".to_string(),
-                tmp_path.clone(),
-            ],
-            cwd: cwd.to_string(),
-            tmp_dir: tmp_path,
+#[derive(Debug)]
+struct TestTemplate {
+    command: Vec<String>,
+}
+impl TestTemplate {
+    fn to_command(
+        &self,
+        input_path: String,
+        cwd: String,
+        tmp_root: PathBuf,
+    ) -> Box<CommandGenerator> {
+        let mut command = self.command.clone();
+        for e in command.iter_mut().filter(|e| *e == "{{input_path}}") {
+            *e = input_path.clone();
         }
-    })
+        Box::new(move || {
+            let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
+            let tmp_path = tmp_dir.to_string_lossy().to_string();
+            let mut command = command.clone();
+            for e in command.iter_mut().filter(|e| *e == "{{tmp_path}}") {
+                *e = tmp_path.clone();
+            }
+            //std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
+            TestCommand {
+                command: command.clone(),
+                cwd: cwd.to_string(),
+                tmp_dir: tmp_path,
+            }
+        })
+    }
+}
+
+fn command_template_verifier(input_paths: &InputPaths) -> TestTemplate {
+    let verifier_exe = input_paths.exe_paths["verifier"].to_string();
+    let verifier_dll = input_paths.exe_paths["verifier-dll"].to_string();
+    TestTemplate {
+        command: vec![
+            verifier_exe,
+            "--config".to_string(),
+            "{{input_path}}".to_string(),
+            "--verifier".to_string(),
+            verifier_dll,
+            "--out-dir".to_string(),
+            "{{tmp_path}}".to_string(),
+        ],
+    }
 }
 
 #[derive(Debug)]
@@ -141,105 +167,132 @@ fn run_command(_command: &TestCommand) -> TestCommandResult {
     }
 }
 
+#[derive(Debug)]
 struct TestApp {
-    generate_command: fn(&BuildPaths, PathBuf, String, String) -> Box<CommandGenerator>,
+    name: String,
+    command_template: TestTemplate,
+    test_groups: Vec<TestGroup>,
 }
 
-fn cmd_run(
-    build_paths: &BuildPaths,
-    input_paths: &InputPaths,
-    test_app: &TestApp,
-    test_group: &TestGroup,
-    output_paths: &OutputPaths,
-) {
-    let inputs = to_inputs(input_paths, test_group);
-    let commands = inputs.iter().map(|input| {
-        let file_name = input.rel_path.file_name().unwrap();
-        let full_path = input_paths.testcases_dir.join(&input.rel_path);
-        let cwd = full_path.parent().unwrap();
+fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &OutputPaths) {
+    let mut commands: Vec<(TestInput, Box<CommandGenerator>)> = Vec::new();
+    for test_app in test_apps {
+        for test_group in &test_app.test_groups {
+            let inputs = to_inputs(&input_paths, &test_group);
+            for input in inputs {
+                let file_name = input
+                    .rel_path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                let full_path = input_paths.testcases_dir.join(&input.rel_path);
+                let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
+                commands.push((
+                    input,
+                    test_app.command_template.to_command(
+                        file_name,
+                        cwd,
+                        output_paths.tmp_dir.clone(),
+                    ),
+                ))
+            }
+        }
+    }
 
-        (
-            input,
-            (test_app.generate_command)(
-                build_paths,
-                PathBuf::from("tmp"),
-                file_name.to_string_lossy().to_string(),
-                cwd.to_string_lossy().to_string(),
-            ),
-        )
-    });
+    let (width, _) = termion::terminal_size().unwrap();
 
-    let bar = indicatif::ProgressBar::new(inputs.len() as u64);
-    bar.set_style(
-        indicatif::ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:30} {pos:>5}/{len:5} {wide_msg}")
-            .progress_chars("##."),
-    );
+    let mut i = 0;
+    let n = commands.len();
     for (input, cmd) in commands {
         let output = run_command(&cmd());
+        i += 1;
         if output.exit_code == 0 {
-            bar.set_message(&format!("Ok: {}", input.id));
+            let mut line = format!(
+                "\r{}[{}/{}] Ok: {}",
+                termion::clear::AfterCursor,
+                i,
+                n,
+                input.id
+            );
+            line.truncate(width as usize);
+            print!("{}", line);
+            io::stdout().flush().unwrap();
         } else {
             println!("Failed: {}\n{}", input.id, output.stdout);
         }
-        bar.inc(1);
     }
-    bar.finish();
     println!();
 }
 
+fn read_build_file(path: &str) -> Result<HashMap<String, String>, Box<std::error::Error>> {
+    let file = File::open(path)?;
+    let content = serde_json::from_reader(file)?;
+    Ok(content)
+}
+
+type TestGroupFile = HashMap<String, Vec<TestGroup>>;
+fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error::Error>> {
+    let file = File::open(path)?;
+    let content = serde_json::from_reader(file)?;
+    Ok(content)
+}
+
+fn to_test_app(
+    test_name: &str,
+    input_paths: &InputPaths,
+    test_group_file: &TestGroupFile,
+) -> TestApp {
+    let command_template = match test_name {
+        "verifier" => command_template_verifier(&input_paths),
+        _ => panic!("not implemented"),
+    };
+    TestApp {
+        name: test_name.to_string(),
+        command_template: command_template,
+        test_groups: test_group_file[test_name].clone(),
+    }
+}
+
 fn main() {
+    let test_app_arg = Arg::with_name("test_app")
+        .required(true)
+        .multiple(true)
+        .possible_values(&["verifier", "machsim"]);
     let matches = App::new("MW Test")
-        .subcommand(SubCommand::with_name("list").arg(Arg::with_name("verifier")))
-        .subcommand(SubCommand::with_name("run").arg(Arg::with_name("verifier")))
+        .subcommand(SubCommand::with_name("list").arg(test_app_arg.clone()))
+        .subcommand(SubCommand::with_name("run").arg(test_app_arg))
         .get_matches();
 
     let input_paths = InputPaths {
+        exe_paths: read_build_file("dev-releaseunicode.json").unwrap(),
         testcases_dir: PathBuf::from("/Users/fabian/Desktop/Moduleworks/testcases"),
     };
 
-    let mut exe_paths: HashMap<String, String> = HashMap::new();
-    exe_paths.insert(
-        "verifier".to_string(),
-        "/Users/fabian/Desktop/Moduleworks/dev/5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe".to_string());
-    exe_paths.insert(
-        "verifier-dll".to_string(),
-        "/Users/fabian/Desktop/Moduleworks/dev/5axis/customer/quickstart/mwVerifier.dll"
-            .to_string(),
-    );
-    let build_paths = BuildPaths {
-        exe_paths: exe_paths,
-    };
-
-    let test_group = TestGroup {
-        rel_dir: PathBuf::from("cutsim/_servertest/verifier"),
-        file_ext: "verytest.ini".to_string(),
-        id_pattern: "cutsim/_servertest/verifier/(.*).verytest.ini".to_string(),
-    };
-
-    let test_app = TestApp {
-        generate_command: generate_verifier_command,
-    };
+    let test_group_file = read_test_group_file("ci.json").unwrap();
 
     if let Some(matches) = matches.subcommand_matches("list") {
-        if matches.is_present("verifier") {
-            cmd_list(&input_paths, &test_group);
+        let test_apps = matches
+            .values_of("test_app")
+            .unwrap()
+            .map(|t| to_test_app(t, &input_paths, &test_group_file))
+            .collect();
+
+        if matches.is_present("test_app") {
+            cmd_list(&input_paths, &test_apps);
         }
     } else if let Some(matches) = matches.subcommand_matches("run") {
-        if matches.is_present("verifier") {
-            let output_paths = OutputPaths {
-                tmp_dir: "tmp".to_string(),
-            };
-            std::fs::remove_dir_all(&output_paths.tmp_dir)
-                .expect("could not clean up tmp directory!");
-            std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
-            cmd_run(
-                &build_paths,
-                &input_paths,
-                &test_app,
-                &test_group,
-                &output_paths,
-            );
-        }
+        let test_apps = matches
+            .values_of("test_app")
+            .unwrap()
+            .map(|t| to_test_app(t, &input_paths, &test_group_file))
+            .collect();
+
+        let output_paths = OutputPaths {
+            tmp_dir: PathBuf::from("tmp"),
+        };
+        std::fs::remove_dir_all(&output_paths.tmp_dir).expect("could not clean up tmp directory!");
+        std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
+        cmd_run(&input_paths, &test_apps, &output_paths);
     }
 }

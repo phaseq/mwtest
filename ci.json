@@ -1,0 +1,7 @@
+{
+	"verifier": [{
+		"rel_dir": "cutsim/_servertest/verifier",
+        "file_ext": "verytest.ini",
+        "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini"
+	}]
+}
