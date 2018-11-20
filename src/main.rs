@@ -240,25 +240,19 @@ fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error::Err
 fn to_test_list(
     input_paths: &InputPaths,
     test_groups: &Vec<TestGroup>,
-    filter: &Option<Vec<&str>>,
+    id_filter: &Fn(&str) -> bool,
 ) -> Vec<(TestGroup, Vec<TestInput>)> {
-    let filter_fn = |input: &TestInput| {
-        if let Some(filters) = filter {
-            filters.iter().any(|f| input.id.contains(f))
-        } else {
-            true
-        }
-    };
-    let to_filtered_inputs = |input_paths: &InputPaths, test_group: &TestGroup| {
-        to_inputs(&input_paths, &test_group)
-            .into_iter()
-            .filter(filter_fn)
-            .collect()
-    };
     test_groups
         .iter()
-        .map(|t| (t.clone(), to_filtered_inputs(&input_paths, &t)))
-        .collect()
+        .map(|test_group| {
+            (
+                test_group.clone(),
+                to_inputs(&input_paths, &test_group)
+                    .into_iter()
+                    .filter(|f| id_filter(&f.id))
+                    .collect(),
+            )
+        }).collect()
 }
 
 fn to_test_apps(
@@ -266,6 +260,14 @@ fn to_test_apps(
     input_paths: &InputPaths,
     test_group_file: &TestGroupFile,
 ) -> Vec<TestApp> {
+    let filter_tokens: Option<Vec<&str>> = args.values_of("filter").map(|v| v.collect());
+    let id_filter = |input: &str| {
+        if let Some(filters) = &filter_tokens {
+            filters.iter().any(|f| input.contains(f))
+        } else {
+            true
+        }
+    };
     args.values_of("test_app")
         .unwrap()
         .map(|test_name| {
@@ -276,11 +278,7 @@ fn to_test_apps(
             TestApp {
                 name: test_name.to_string(),
                 command_template: command_template,
-                tests: to_test_list(
-                    input_paths,
-                    &test_group_file[test_name],
-                    &args.values_of("filter").map(|v| v.collect()),
-                ),
+                tests: to_test_list(input_paths, &test_group_file[test_name], &id_filter),
             }
         }).collect()
 }
