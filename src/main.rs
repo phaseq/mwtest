@@ -39,7 +39,7 @@ fn test_input_paths(path: &Path, file_ext: &str) -> Vec<DirEntry> {
     paths
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TestInput {
     id: String,
     rel_path: PathBuf,
@@ -83,10 +83,10 @@ fn to_inputs(input_paths: &InputPaths, test_group: &TestGroup) -> Vec<TestInput>
     test_inputs(&paths, &input_paths.testcases_dir, &test_group.id_pattern)
 }
 
-fn cmd_list(input_paths: &InputPaths, test_apps: &Vec<TestApp>) {
+fn cmd_list(test_apps: &Vec<TestApp>) {
     for test_app in test_apps {
-        for test_group in &test_app.test_groups {
-            for input in to_inputs(input_paths, &test_group) {
+        for (_test_group, test_inputs) in &test_app.tests {
+            for input in test_inputs {
                 println!("{} --id {}", test_app.name, input.id);
             }
         }
@@ -171,14 +171,13 @@ fn run_command(_command: &TestCommand) -> TestCommandResult {
 struct TestApp {
     name: String,
     command_template: TestTemplate,
-    test_groups: Vec<TestGroup>,
+    tests: Vec<(TestGroup, Vec<TestInput>)>,
 }
 
 fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &OutputPaths) {
     let mut commands: Vec<(TestInput, Box<CommandGenerator>)> = Vec::new();
     for test_app in test_apps {
-        for test_group in &test_app.test_groups {
-            let inputs = to_inputs(&input_paths, &test_group);
+        for (_test_group, inputs) in &test_app.tests {
             for input in inputs {
                 let file_name = input
                     .rel_path
@@ -189,7 +188,7 @@ fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &Ou
                 let full_path = input_paths.testcases_dir.join(&input.rel_path);
                 let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
                 commands.push((
-                    input,
+                    input.clone(),
                     test_app.command_template.to_command(
                         file_name,
                         cwd,
@@ -238,20 +237,52 @@ fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error::Err
     Ok(content)
 }
 
-fn to_test_app(
-    test_name: &str,
+fn to_test_list(
+    input_paths: &InputPaths,
+    test_groups: &Vec<TestGroup>,
+    filter: &Option<Vec<&str>>,
+) -> Vec<(TestGroup, Vec<TestInput>)> {
+    let filter_fn = |input: &TestInput| {
+        if let Some(filters) = filter {
+            filters.iter().any(|f| input.id.contains(f))
+        } else {
+            true
+        }
+    };
+    let to_filtered_inputs = |input_paths: &InputPaths, test_group: &TestGroup| {
+        to_inputs(&input_paths, &test_group)
+            .into_iter()
+            .filter(filter_fn)
+            .collect()
+    };
+    test_groups
+        .iter()
+        .map(|t| (t.clone(), to_filtered_inputs(&input_paths, &t)))
+        .collect()
+}
+
+fn to_test_apps(
+    args: &clap::ArgMatches,
     input_paths: &InputPaths,
     test_group_file: &TestGroupFile,
-) -> TestApp {
-    let command_template = match test_name {
-        "verifier" => command_template_verifier(&input_paths),
-        _ => panic!("not implemented"),
-    };
-    TestApp {
-        name: test_name.to_string(),
-        command_template: command_template,
-        test_groups: test_group_file[test_name].clone(),
-    }
+) -> Vec<TestApp> {
+    args.values_of("test_app")
+        .unwrap()
+        .map(|test_name| {
+            let command_template = match test_name {
+                "verifier" => command_template_verifier(&input_paths),
+                _ => panic!("not implemented"),
+            };
+            TestApp {
+                name: test_name.to_string(),
+                command_template: command_template,
+                tests: to_test_list(
+                    input_paths,
+                    &test_group_file[test_name],
+                    &args.values_of("filter").map(|v| v.collect()),
+                ),
+            }
+        }).collect()
 }
 
 fn main() {
@@ -259,10 +290,22 @@ fn main() {
         .required(true)
         .multiple(true)
         .possible_values(&["verifier", "machsim"]);
+    let filter_arg = Arg::with_name("filter")
+        .short("f")
+        .long("filter")
+        .takes_value(true)
+        .help("select ids that contain one of the given substrings")
+        .multiple(true);
     let matches = App::new("MW Test")
-        .subcommand(SubCommand::with_name("list").arg(test_app_arg.clone()))
-        .subcommand(SubCommand::with_name("run").arg(test_app_arg))
-        .get_matches();
+        .subcommand(
+            SubCommand::with_name("list")
+                .arg(test_app_arg.clone())
+                .arg(filter_arg.clone()),
+        ).subcommand(
+            SubCommand::with_name("run")
+                .arg(test_app_arg)
+                .arg(filter_arg),
+        ).get_matches();
 
     let input_paths = InputPaths {
         exe_paths: read_build_file("dev-releaseunicode.json").unwrap(),
@@ -272,22 +315,10 @@ fn main() {
     let test_group_file = read_test_group_file("ci.json").unwrap();
 
     if let Some(matches) = matches.subcommand_matches("list") {
-        let test_apps = matches
-            .values_of("test_app")
-            .unwrap()
-            .map(|t| to_test_app(t, &input_paths, &test_group_file))
-            .collect();
-
-        if matches.is_present("test_app") {
-            cmd_list(&input_paths, &test_apps);
-        }
+        let test_apps = to_test_apps(&matches, &input_paths, &test_group_file);
+        cmd_list(&test_apps);
     } else if let Some(matches) = matches.subcommand_matches("run") {
-        let test_apps = matches
-            .values_of("test_app")
-            .unwrap()
-            .map(|t| to_test_app(t, &input_paths, &test_group_file))
-            .collect();
-
+        let test_apps = to_test_apps(&matches, &input_paths, &test_group_file);
         let output_paths = OutputPaths {
             tmp_dir: PathBuf::from("tmp"),
         };
