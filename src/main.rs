@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 use std::process::Command;
+use uuid::Uuid;
 
 #[macro_use]
 extern crate serde_derive;
@@ -48,9 +48,11 @@ fn test_inputs(paths: &Vec<PathBuf>, root_dir: &Path, pattern: &str) -> Vec<Test
                 .replace('\\', "/");
             let id = re
                 .captures(&rel_path)
-                .unwrap()
+                .expect("pattern did not match on one of the tests!")
                 .get(1)
                 .map_or("", |m| m.as_str());
+
+            println!("{}", id);
 
             TestInput {
                 id: id.to_string(),
@@ -63,13 +65,6 @@ fn test_inputs(paths: &Vec<PathBuf>, root_dir: &Path, pattern: &str) -> Vec<Test
 struct InputPaths {
     exe_paths: HashMap<String, String>,
     testcases_dir: PathBuf,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TestGroup {
-    find: String,
-    id_pattern: String,
-    matches_parent_dir: Option<bool>,
 }
 
 fn to_inputs(input_paths: &InputPaths, test_group: &TestGroup) -> Vec<TestInput> {
@@ -101,54 +96,6 @@ struct TestCommand {
 type CommandGenerator = Fn() -> TestCommand;
 
 #[derive(Debug)]
-struct TestTemplate {
-    command: Vec<String>,
-}
-impl TestTemplate {
-    fn to_command(
-        &self,
-        input_path: String,
-        cwd: String,
-        tmp_root: PathBuf,
-    ) -> Box<CommandGenerator> {
-        let mut command = self.command.clone();
-        for e in command.iter_mut().filter(|e| *e == "{{input_path}}") {
-            *e = input_path.clone();
-        }
-        Box::new(move || {
-            let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
-            let tmp_path = tmp_dir.to_string_lossy().to_string();
-            let mut command = command.clone();
-            for e in command.iter_mut().filter(|e| *e == "{{tmp_path}}") {
-                *e = tmp_path.clone();
-            }
-            std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
-            TestCommand {
-                command: command.clone(),
-                cwd: cwd.to_string(),
-                tmp_dir: tmp_path,
-            }
-        })
-    }
-}
-
-fn command_template_verifier(input_paths: &InputPaths) -> TestTemplate {
-    let verifier_exe = input_paths.exe_paths["verifier"].to_string();
-    let verifier_dll = input_paths.exe_paths["verifier-dll"].to_string();
-    TestTemplate {
-        command: vec![
-            verifier_exe,
-            "--config".to_string(),
-            "{{input_path}}".to_string(),
-            "--verifier".to_string(),
-            verifier_dll,
-            "--out-dir".to_string(),
-            "{{tmp_path}}".to_string(),
-        ],
-    }
-}
-
-#[derive(Debug)]
 struct TestCommandResult {
     exit_code: i32,
     stdout: String,
@@ -164,20 +111,18 @@ fn run_command(command: &TestCommand) -> TestCommandResult {
     let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
     let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
     let output_str = stderr.to_owned() + stdout;
-    if !std::fs::read_dir(&command.tmp_dir).unwrap().next().is_some() {
-        std::fs::remove_dir(&command.tmp_dir).expect("could not remove test's empty tmp directory!");
+    if !std::fs::read_dir(&command.tmp_dir)
+        .unwrap()
+        .next()
+        .is_some()
+    {
+        std::fs::remove_dir(&command.tmp_dir)
+            .expect("could not remove test's empty tmp directory!");
     }
     TestCommandResult {
         exit_code: exit_code,
         stdout: output_str,
     }
-}
-
-#[derive(Debug)]
-struct TestApp {
-    name: String,
-    command_template: TestTemplate,
-    tests: Vec<(TestGroup, Vec<TestInput>)>,
 }
 
 fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &OutputPaths) {
@@ -195,7 +140,8 @@ fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &Ou
                 let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
                 commands.push((
                     input.clone(),
-                    test_app.command_template.to_command(
+                    to_command(
+                        &test_app.command_template,
                         file_name,
                         cwd,
                         output_paths.tmp_dir.clone(),
@@ -230,12 +176,29 @@ fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &Ou
     println!();
 }
 
+#[derive(Debug, Deserialize)]
+struct TestConfig {
+    command: Vec<String>,
+}
+type TestConfigFile = HashMap<String, TestConfig>;
+fn read_test_config_file(path: &str) -> Result<TestConfigFile, Box<std::error::Error>> {
+    let file = File::open(path)?;
+    let content = serde_json::from_reader(file)?;
+    Ok(content)
+}
+
 fn read_build_file(path: &str) -> Result<HashMap<String, String>, Box<std::error::Error>> {
     let file = File::open(path)?;
     let content = serde_json::from_reader(file)?;
     Ok(content)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct TestGroup {
+    find: String,
+    id_pattern: String,
+    matches_parent_dir: Option<bool>,
+}
 type TestGroupFile = HashMap<String, Vec<TestGroup>>;
 fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error::Error>> {
     let file = File::open(path)?;
@@ -261,8 +224,56 @@ fn to_test_list(
         }).collect()
 }
 
+type CommandTemplate = Vec<String>;
+fn replace_matches(
+    command_template: &CommandTemplate,
+    patterns: &HashMap<String, String>,
+) -> CommandTemplate {
+    command_template
+        .iter()
+        .map(|t| {
+            if let Some(value) = patterns.get(t) {
+                value.clone()
+            } else {
+                t.clone()
+            }
+        }).collect()
+}
+fn replace_match(command_template: &CommandTemplate, from: &str, to: &str) -> CommandTemplate {
+    command_template
+        .iter()
+        .map(|t| if t == from { to.to_string() } else { t.clone() })
+        .collect()
+}
+fn to_command(
+    command_template: &CommandTemplate,
+    input_path: String,
+    cwd: String,
+    tmp_root: PathBuf,
+) -> Box<CommandGenerator> {
+    let command = replace_match(command_template, "{{input_path}}", &input_path);
+    Box::new(move || {
+        let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
+        let tmp_path = tmp_dir.to_string_lossy().to_string();
+        let command = replace_match(&command, "{{tmp_path}}", &tmp_path);
+        std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
+        TestCommand {
+            command: command.clone(),
+            cwd: cwd.to_string(),
+            tmp_dir: tmp_path,
+        }
+    })
+}
+
+#[derive(Debug)]
+struct TestApp {
+    name: String,
+    command_template: CommandTemplate,
+    tests: Vec<(TestGroup, Vec<TestInput>)>,
+}
 fn to_test_apps(
     args: &clap::ArgMatches,
+    test_config: &TestConfigFile,
     input_paths: &InputPaths,
     test_group_file: &TestGroupFile,
 ) -> Vec<TestApp> {
@@ -277,10 +288,8 @@ fn to_test_apps(
     args.values_of("test_app")
         .unwrap()
         .map(|test_name| {
-            let command_template = match test_name {
-                "verifier" => command_template_verifier(&input_paths),
-                _ => panic!("not implemented"),
-            };
+            let config = &test_config[test_name];
+            let command_template = replace_matches(&config.command, &input_paths.exe_paths);
             TestApp {
                 name: test_name.to_string(),
                 command_template: command_template,
@@ -290,10 +299,7 @@ fn to_test_apps(
 }
 
 fn main() {
-    let test_app_arg = Arg::with_name("test_app")
-        .required(true)
-        .multiple(true)
-        .possible_values(&["verifier", "machsim"]);
+    let test_app_arg = Arg::with_name("test_app").required(true).multiple(true);
     let filter_arg = Arg::with_name("filter")
         .short("f")
         .long("filter")
@@ -311,6 +317,8 @@ fn main() {
                 .arg(filter_arg),
         ).get_matches();
 
+    let test_config = read_test_config_file("tests.json").unwrap();
+
     let input_paths = InputPaths {
         exe_paths: read_build_file("dev-releaseunicode.json").unwrap(),
         testcases_dir: PathBuf::from("D:\\Sources\\mwiA\\testcases"),
@@ -319,15 +327,16 @@ fn main() {
     let test_group_file = read_test_group_file("ci.json").unwrap();
 
     if let Some(matches) = matches.subcommand_matches("list") {
-        let test_apps = to_test_apps(&matches, &input_paths, &test_group_file);
+        let test_apps = to_test_apps(&matches, &test_config, &input_paths, &test_group_file);
         cmd_list(&test_apps);
     } else if let Some(matches) = matches.subcommand_matches("run") {
-        let test_apps = to_test_apps(&matches, &input_paths, &test_group_file);
+        let test_apps = to_test_apps(&matches, &test_config, &input_paths, &test_group_file);
         let output_paths = OutputPaths {
             tmp_dir: PathBuf::from("tmp"),
         };
         if Path::exists(&output_paths.tmp_dir) {
-            std::fs::remove_dir_all(&output_paths.tmp_dir).expect("could not clean up tmp directory!");
+            std::fs::remove_dir_all(&output_paths.tmp_dir)
+                .expect("could not clean up tmp directory!");
         }
         std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
         cmd_run(&input_paths, &test_apps, &output_paths);

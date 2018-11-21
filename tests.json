@@ -1,0 +1,19 @@
+{
+  "verifier": {
+    "command": [
+      "{{verifier}}",
+      "--config", "{{input_path}}",
+      "--verifier", "{{verifier-dll}}",
+      "--out-dir", "{{tmp_path}}"
+    ]
+  },
+  "machsim": {
+    "command": [
+      "{{machsim}}", "newmode",
+      "--input-dir", "{{input_path}}",
+      "--output-dir", "{{tmp_path}}",
+      "--tmp-dir", "{{tmp_path}}",
+      "--stand-alone", "1"
+    ]
+  }
+}

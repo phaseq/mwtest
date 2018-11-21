@@ -4,5 +4,12 @@
       "find": "glob:cutsim/_servertest/verifier/smoke/**/*.verytest.ini",
       "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini"
     }
+  ],
+  "machsim": [
+    {
+      "find": "glob:machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
+      "id_pattern": "machsim/MachSimTestCases/(.*)",
+      "matches_parent_dir": true
+    }
   ]
 }

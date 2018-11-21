@@ -1,4 +1,5 @@
 {
-	"verifier": "D:/Sources/mwiA/dev/5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
-	"verifier-dll": "D:/Sources/mwiA/dev/5axis/customer/quickstart/mwVerifier.dll"
+	"{{verifier}}": "D:/Sources/mwiA/dev/5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
+	"{{verifier-dll}}": "D:/Sources/mwiA/dev/5axis/customer/quickstart/mwVerifier.dll",
+	"{{machsim}}": "D:/Sources/mwiA/dev/5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe"
 }
