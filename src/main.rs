@@ -1,42 +1,33 @@
 extern crate clap;
 extern crate regex;
-extern crate termion;
+//extern crate termion;
+extern crate glob;
 extern crate uuid;
 use clap::{App, Arg, SubCommand};
 use regex::Regex;
 use std::collections::HashMap;
-use std::fs::{self, DirEntry, File};
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use std::process::Command;
 
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 
-fn test_input_paths(path: &Path, file_ext: &str) -> Vec<DirEntry> {
-    fn glob_recursive(path: &Path, file_ext: &str, cb: &mut FnMut(DirEntry)) -> io::Result<()> {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                glob_recursive(&path, file_ext, cb)?;
-            } else {
-                let file_name = path.file_name();
-                if let Some(file_name) = file_name {
-                    if file_name.to_str().unwrap_or("").ends_with(file_ext) {
-                        cb(entry);
-                    }
-                }
-            }
-        }
-        Ok(())
+fn test_input_paths(path: &Path, test_group: &TestGroup) -> Vec<PathBuf> {
+    let pattern: Vec<&str> = test_group.find.split(':').collect();
+    let rel_path = path.join(pattern[1]).to_string_lossy().to_string();
+    let paths = glob::glob(&rel_path)
+        .expect("failed to read glob pattern!")
+        .map(|s| s.unwrap());
+    if test_group.matches_parent_dir.map_or(false, |b| b) {
+        paths.map(|s| PathBuf::from(s.parent().unwrap())).collect()
+    } else {
+        paths.collect()
     }
-
-    let mut paths: Vec<DirEntry> = Vec::new();
-    glob_recursive(path, file_ext, &mut |path| paths.push(path)).expect("Could not iterate path!");
-    paths
 }
 
 #[derive(Debug, Clone)]
@@ -45,13 +36,16 @@ struct TestInput {
     rel_path: PathBuf,
 }
 
-fn test_inputs(paths: &Vec<DirEntry>, root_dir: &Path, pattern: &str) -> Vec<TestInput> {
+fn test_inputs(paths: &Vec<PathBuf>, root_dir: &Path, pattern: &str) -> Vec<TestInput> {
     let re = Regex::new(pattern).unwrap();
     paths
         .iter()
         .map(|p| {
-            let rel_path_buf = p.path().strip_prefix(root_dir).unwrap().to_path_buf();
-            let rel_path = rel_path_buf.to_string_lossy().to_string();
+            let rel_path_buf = p.strip_prefix(root_dir).unwrap().to_path_buf();
+            let rel_path = rel_path_buf
+                .to_string_lossy()
+                .to_string()
+                .replace('\\', "/");
             let id = re
                 .captures(&rel_path)
                 .unwrap()
@@ -73,13 +67,13 @@ struct InputPaths {
 
 #[derive(Debug, Clone, Deserialize)]
 struct TestGroup {
-    rel_dir: PathBuf,
-    file_ext: String,
+    find: String,
     id_pattern: String,
+    matches_parent_dir: Option<bool>,
 }
 
 fn to_inputs(input_paths: &InputPaths, test_group: &TestGroup) -> Vec<TestInput> {
-    let paths = test_input_paths(&input_paths.testcases_dir, &test_group.file_ext);
+    let paths = test_input_paths(&input_paths.testcases_dir, &test_group);
     test_inputs(&paths, &input_paths.testcases_dir, &test_group.id_pattern)
 }
 
@@ -128,7 +122,7 @@ impl TestTemplate {
             for e in command.iter_mut().filter(|e| *e == "{{tmp_path}}") {
                 *e = tmp_path.clone();
             }
-            //std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
+            std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
             TestCommand {
                 command: command.clone(),
                 cwd: cwd.to_string(),
@@ -160,10 +154,22 @@ struct TestCommandResult {
     stdout: String,
 }
 
-fn run_command(_command: &TestCommand) -> TestCommandResult {
+fn run_command(command: &TestCommand) -> TestCommandResult {
+    let output = Command::new(&command.command[0])
+        .args(command.command[1..].iter())
+        .current_dir(&command.cwd)
+        .output()
+        .expect("failed to run test!");
+    let exit_code = output.status.code().unwrap_or(-7787);
+    let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
+    let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
+    let output_str = stderr.to_owned() + stdout;
+    if !std::fs::read_dir(&command.tmp_dir).unwrap().next().is_some() {
+        std::fs::remove_dir(&command.tmp_dir).expect("could not remove test's empty tmp directory!");
+    }
     TestCommandResult {
-        exit_code: 0,
-        stdout: "did not run".to_string(),
+        exit_code: exit_code,
+        stdout: output_str,
     }
 }
 
@@ -199,7 +205,7 @@ fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &Ou
         }
     }
 
-    let (width, _) = termion::terminal_size().unwrap();
+    let (width, _) = (100, 0); //termion::terminal_size().unwrap();
 
     let mut i = 0;
     let n = commands.len();
@@ -209,7 +215,7 @@ fn cmd_run(input_paths: &InputPaths, test_apps: &Vec<TestApp>, output_paths: &Ou
         if output.exit_code == 0 {
             let mut line = format!(
                 "\r{}[{}/{}] Ok: {}",
-                termion::clear::AfterCursor,
+                "", //termion::clear::AfterCursor,
                 i,
                 n,
                 input.id
@@ -307,7 +313,7 @@ fn main() {
 
     let input_paths = InputPaths {
         exe_paths: read_build_file("dev-releaseunicode.json").unwrap(),
-        testcases_dir: PathBuf::from("/Users/fabian/Desktop/Moduleworks/testcases"),
+        testcases_dir: PathBuf::from("D:\\Sources\\mwiA\\testcases"),
     };
 
     let test_group_file = read_test_group_file("ci.json").unwrap();
@@ -320,7 +326,9 @@ fn main() {
         let output_paths = OutputPaths {
             tmp_dir: PathBuf::from("tmp"),
         };
-        std::fs::remove_dir_all(&output_paths.tmp_dir).expect("could not clean up tmp directory!");
+        if Path::exists(&output_paths.tmp_dir) {
+            std::fs::remove_dir_all(&output_paths.tmp_dir).expect("could not clean up tmp directory!");
+        }
         std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
         cmd_run(&input_paths, &test_apps, &output_paths);
     }
