@@ -1,15 +1,15 @@
 {
   "verifier": {
     "command": [
-      "{{verifier}}",
+      "{{mwVerifierTest}}",
       "--config", "{{input_path}}",
-      "--verifier", "{{verifier-dll}}",
+      "--verifier", "{{mwVerifierDll}}",
       "--out-dir", "{{tmp_path}}"
     ]
   },
   "machsim": {
     "command": [
-      "{{machsim}}", "newmode",
+      "{{machsimtest}}", "newmode",
       "--input-dir", "{{input_path}}",
       "--output-dir", "{{tmp_path}}",
       "--tmp-dir", "{{tmp_path}}",
