@@ -9,11 +9,21 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
+//use threadpool::ThreadPool;
 
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
+
+#[derive(Debug)]
+struct TestApp {
+    name: String,
+    command_template: CommandTemplate,
+    tests: Vec<PopulatedTestGroup>,
+}
+
+type PopulatedTestGroup = (config::TestGroup, Vec<TestInput>);
 
 #[derive(Debug, Clone)]
 pub struct TestInput {
@@ -87,31 +97,33 @@ fn create_run_commands(
     test_apps: &Vec<TestApp>,
     output_paths: &OutputPaths,
 ) -> Vec<(TestInput, Box<CommandGenerator>)> {
-    let mut commands = Vec::new();
-    for test_app in test_apps {
-        for (_test_group, inputs) in &test_app.tests {
-            for input in inputs {
-                let file_name = input
-                    .rel_path
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
-                let full_path = input_paths.testcases_dir.join(&input.rel_path);
-                let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
-                commands.push((
-                    input.clone(),
-                    to_command(
-                        &test_app.command_template,
-                        file_name,
-                        cwd,
-                        output_paths.tmp_dir.clone(),
-                    ),
-                ))
-            }
-        }
-    }
-    commands
+    test_apps
+        .iter()
+        .flat_map(|test_app: &TestApp| {
+            test_app
+                .tests
+                .iter()
+                .flat_map(|(_test_group, inputs)| inputs)
+                .map(|input: &TestInput| {
+                    let file_name = input
+                        .rel_path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    let full_path = input_paths.testcases_dir.join(&input.rel_path);
+                    let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
+                    (
+                        input.clone(),
+                        to_command(
+                            &test_app.command_template,
+                            file_name,
+                            cwd,
+                            output_paths.tmp_dir.clone(),
+                        ),
+                    )
+                }).collect::<Vec<(TestInput, Box<CommandGenerator>)>>()
+        }).collect()
 }
 
 fn cmd_run(input_paths: &config::InputPaths, test_apps: &Vec<TestApp>, output_paths: &OutputPaths) {
@@ -142,11 +154,11 @@ fn cmd_run(input_paths: &config::InputPaths, test_apps: &Vec<TestApp>, output_pa
     println!();
 }
 
-fn flatten_test_groups(
+fn populate_test_groups(
     input_paths: &config::InputPaths,
     test_groups: &Vec<config::TestGroup>,
     id_filter: &Fn(&str) -> bool,
-) -> Vec<(config::TestGroup, Vec<TestInput>)> {
+) -> Vec<PopulatedTestGroup> {
     test_groups
         .iter()
         .map(|test_group| {
@@ -211,12 +223,6 @@ fn to_command(
     })
 }
 
-#[derive(Debug)]
-struct TestApp {
-    name: String,
-    command_template: CommandTemplate,
-    tests: Vec<(config::TestGroup, Vec<TestInput>)>,
-}
 fn test_apps_from_args(
     args: &clap::ArgMatches,
     test_config: &config::TestConfigFile,
@@ -249,7 +255,7 @@ fn test_apps_from_args(
             TestApp {
                 name: test_name.to_string(),
                 command_template: command_template,
-                tests: flatten_test_groups(input_paths, &test_group_file[test_name], &id_filter),
+                tests: populate_test_groups(input_paths, &test_group_file[test_name], &id_filter),
             }
         }).collect()
 }
