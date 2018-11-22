@@ -1,20 +1,22 @@
 mod config;
 extern crate clap;
+extern crate htmlescape;
+extern crate num_cpus;
 extern crate term_size;
 extern crate threadpool;
 extern crate uuid;
-use clap::{App, Arg, SubCommand};
-use std::collections::HashMap;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use threadpool::ThreadPool;
-use uuid::Uuid;
-
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
+use clap::{App, Arg, SubCommand};
+use std::collections::{hash_map, HashMap};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use threadpool::ThreadPool;
+use uuid::Uuid;
 
 #[derive(Debug)]
 struct TestApp {
@@ -43,6 +45,7 @@ fn cmd_list(test_apps: &Vec<TestApp>) {
 
 #[derive(Debug)]
 struct OutputPaths {
+    out_dir: PathBuf,
     tmp_dir: PathBuf,
 }
 
@@ -54,7 +57,7 @@ struct TestCommand {
 }
 type CommandGenerator = Fn() -> TestCommand;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TestCommandResult {
     exit_code: i32,
     stdout: String,
@@ -126,6 +129,63 @@ fn create_run_commands(
         }).collect()
 }
 
+struct XmlReport {
+    file: File,
+    results: HashMap<String, Vec<(String, TestCommandResult)>>,
+}
+impl XmlReport {
+    fn create(path: &Path) -> std::io::Result<XmlReport> {
+        Ok(XmlReport {
+            file: File::create(&path)?,
+            results: HashMap::new(),
+        })
+    }
+    fn add(&mut self, test_name: &str, test_id: &str, test_result: &TestCommandResult) {
+        match self.results.entry(test_name.to_string()) {
+            hash_map::Entry::Vacant(e) => {
+                e.insert(vec![(test_id.to_string(), test_result.clone())]);
+            }
+            hash_map::Entry::Occupied(mut e) => {
+                e.get_mut().push((test_id.to_string(), test_result.clone()));
+            }
+        }
+    }
+    fn write(&mut self) -> std::io::Result<()> {
+        let mut out = BufWriter::new(&self.file);
+        out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
+        out.write(b"<testsuites>")?;
+        for (test_name, test_results) in &self.results {
+            out.write(
+                format!(
+                    "<testsuite name=\"{}\" test=\"{}\" failures=\"{}\">",
+                    test_name,
+                    test_results.len(),
+                    -1
+                ).as_bytes(),
+            )?;
+            for result in test_results.iter() {
+                out.write(
+                    format!(
+                        "<testcase name=\"{}\">",
+                        htmlescape::encode_attribute(&result.0)
+                    ).as_bytes(),
+                )?;
+                out.write(format!("<exit-code>{}</exit_code>", result.1.exit_code).as_bytes())?;
+                out.write(
+                    format!(
+                        "<system_out>{}</system_out>",
+                        htmlescape::encode_minimal(&result.1.stdout)
+                    ).as_bytes(),
+                )?;
+                out.write(b"</testcase>")?;
+            }
+            out.write(b"</testuite>")?;
+        }
+        out.write(b"</testsuites>")?;
+        Ok(())
+    }
+}
+
 struct RunConfig {
     parallel: bool,
 }
@@ -139,15 +199,32 @@ fn cmd_run(
 
     let (width, _) = term_size::dimensions().unwrap();
 
-    let n_workers = 4;
+    let n_workers = if run_config.parallel {
+        num_cpus::get()
+    } else {
+        1
+    };
     let pool = ThreadPool::new(n_workers);
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let mut i = 0;
     let n = commands.len();
+    for (input, cmd_creator) in commands {
+        let cmd = cmd_creator();
+        let tx = tx.clone();
+        pool.execute(move || {
+            let output = run_command(&cmd);
+            tx.send((input, output))
+                .expect("channel did not accept test result!");
+        });
+    }
 
-    let mut print_handler = |input: &TestInput, output: &TestCommandResult| {
+    let mut xml_report = XmlReport::create(&output_paths.out_dir.join("results.xml"))
+        .expect("could not create test report!");
+
+    let mut i = 0;
+    for (input, output) in rx.iter().take(n) {
         i += 1;
+        xml_report.add("todo", &input.id, &output);
         if output.exit_code == 0 {
             let line = format!("\r[{}/{}] Ok: {}", i, n, input.id);
             print!("{:width$}", line, width = width);
@@ -155,27 +232,8 @@ fn cmd_run(
         } else {
             println!("Failed: {}\n{}", input.id, output.stdout);
         }
-    };
-
-    for (input, cmd_creator) in commands {
-        let cmd = cmd_creator();
-        if run_config.parallel {
-            let tx = tx.clone();
-            pool.execute(move || {
-                let output = run_command(&cmd);
-                tx.send((input, output))
-                    .expect("channel did not accept test result!");
-            });
-        } else {
-            let output = run_command(&cmd);
-            print_handler(&input, &output);
-        }
     }
-    if run_config.parallel {
-        for (input, output) in rx.iter().take(n) {
-            print_handler(&input, &output);
-        }
-    }
+    xml_report.write().expect("failed to write report!");
     println!();
 }
 
@@ -339,6 +397,7 @@ fn main() {
     } else if let Some(matches) = matches.subcommand_matches("run") {
         let test_apps = test_apps_from_args(&matches, &test_config, &input_paths, &test_group_file);
         let output_paths = OutputPaths {
+            out_dir: PathBuf::from("."),
             tmp_dir: PathBuf::from("tmp"),
         };
         if Path::exists(&output_paths.tmp_dir) {
