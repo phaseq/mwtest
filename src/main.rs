@@ -2,8 +2,8 @@ mod config;
 extern crate clap;
 extern crate htmlescape;
 extern crate num_cpus;
+extern crate scoped_threadpool;
 extern crate term_size;
-extern crate threadpool;
 extern crate uuid;
 extern crate xge_lib;
 #[macro_use]
@@ -11,12 +11,12 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 use clap::{App, Arg, SubCommand};
+use scoped_threadpool::Pool;
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use threadpool::ThreadPool;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -216,9 +216,9 @@ impl XmlReport {
     }
 }
 
-fn run_xge(
-    tests: &HashMap<&str, Vec<(TestInput, Box<CommandGenerator>)>>,
-    tx: &std::sync::mpsc::Sender<(String, TestInput, TestCommandResult)>,
+fn run_xge<'a>(
+    tests: &'a HashMap<&'a str, Vec<(TestInput, Box<CommandGenerator>)>>,
+    tx: &std::sync::mpsc::Sender<(&'a str, &'a TestInput, TestCommandResult)>,
 ) -> std::io::Result<()> {
     let mut xge = xge_lib::XGE::new();
     let mut issued_commands: Vec<(&str, &TestInput)> = Vec::new();
@@ -245,7 +245,7 @@ fn run_xge(
             exit_code: stream_result.exit_code,
             stdout: stream_result.stdout,
         };
-        tx.send((command.0.to_string(), command.1.clone(), result))
+        tx.send((command.0, command.1, result))
             .expect("error in mpsc: could not send result");
     }
     Ok(())
@@ -271,7 +271,7 @@ fn cmd_run(
     } else {
         1
     };
-    let pool = ThreadPool::new(n_workers);
+    let mut pool = Pool::new(n_workers as u32);
     let (tx, rx) = std::sync::mpsc::channel();
 
     if run_config.xge {
@@ -281,19 +281,19 @@ fn cmd_run(
             std::process::exit(-1);
         }
     } else {
-        for (test_name, commands) in &tests {
-            for (input, cmd_creator) in commands {
-                let test_name_copy = test_name.to_string();
-                let input_copy = input.clone();
-                let cmd = cmd_creator().clone();
-                let tx = tx.clone();
-                pool.execute(move || {
-                    let output = run_command(&cmd);
-                    tx.send((test_name_copy, input_copy, output))
-                        .expect("channel did not accept test result!");
-                });
+        pool.scoped(|scoped| {
+            for (test_name, commands) in &tests {
+                for (input, cmd_creator) in commands {
+                    let cmd = cmd_creator().clone();
+                    let tx = tx.clone();
+                    scoped.execute(move || {
+                        let output = run_command(&cmd);
+                        tx.send((test_name, input, output))
+                            .expect("channel did not accept test result!");
+                    });
+                }
             }
-        }
+        });
     }
 
     let mut xml_report = XmlReport::create(&output_paths.out_dir.join("results.xml"))

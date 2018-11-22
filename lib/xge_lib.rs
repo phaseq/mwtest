@@ -21,7 +21,6 @@ pub struct StreamResult {
 pub struct XGE {
     client_process: std::process::Child,
     writer: std::io::BufWriter<std::net::TcpStream>,
-    //reader: std::io::BufReader<&'a mut std::process::ChildStdout>,
 }
 impl<'a> XGE {
     pub fn new() -> XGE {
@@ -44,12 +43,10 @@ impl<'a> XGE {
         let client_socket = listener.incoming().next().unwrap();
 
         let writer = std::io::BufWriter::new(client_socket.unwrap());
-        //let reader = std::io::BufReader::new(client_process.stdout.as_mut().unwrap());
 
         XGE {
             client_process: client_process,
             writer: writer,
-            //reader: reader,
         }
     }
 
