@@ -1,11 +1,11 @@
 mod config;
-extern crate bufstream;
 extern crate clap;
 extern crate htmlescape;
 extern crate num_cpus;
 extern crate term_size;
 extern crate threadpool;
 extern crate uuid;
+extern crate xge_lib;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
@@ -14,7 +14,7 @@ extern crate serde_json;
 use clap::{App, Arg, SubCommand};
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use threadpool::ThreadPool;
@@ -217,39 +217,72 @@ impl XmlReport {
     }
 }
 
-fn run_xge(tests: &HashMap<&str, Vec<(TestInput, Box<CommandGenerator>)>>) -> std::io::Result<()> {
+fn run_xge(
+    tests: &HashMap<&str, Vec<(TestInput, Box<CommandGenerator>)>>,
+    tx: &std::sync::mpsc::Sender<(String, TestInput, TestCommandResult)>,
+) -> std::io::Result<()> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
-    let xge_client = std::process::Command::new("xge.exe")
+    let xge_exe = PathBuf::from(
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("xge"),
+    );
+    let mut xge_client = std::process::Command::new(xge_exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .arg("client")
         .arg(format!("127.0.0.1:{}", port))
         .spawn()
         .expect("could not spawn XGE client!");
-    // accept connections and process them serially
     for stream in listener.incoming() {
-        let mut bufstream = bufstream::BufStream::new(stream?);
-        for (test_name, commands) in tests {
-            for (input, cmd_creator) in commands {
-                let cmd = cmd_creator();
-                bufstream.write(b"l")?;
-                bufstream.write(
-                    json!(vec![cmd.cwd, input.id.clone()].extend(cmd.command))
-                        .to_string()
-                        .as_bytes(),
-                )?;
-                bufstream.write(b"\n")?;
+        {
+            let mut writer = std::io::BufWriter::new(stream?);
+            for (test_name, commands) in tests {
+                for (input, cmd_creator) in commands {
+                    let cmd = cmd_creator();
+                    let request = xge_lib::StreamRequest {
+                        id: 1234,
+                        title: input.id.clone(),
+                        cwd: cmd.cwd,
+                        command: cmd.command,
+                        local: false,
+                    };
+                    writer.write(serde_json::to_string(&request)?.as_bytes())?;
+                    writer.write(b"\n")?;
+                    writer.flush()?;
+                }
             }
         }
-        for result_line in bufstream.lines() {
-            println!("{}", result_line?);
+        println!("listening");
+        let reader = std::io::BufReader::new(xge_client.stdout.as_mut().unwrap());
+        for line in reader.lines().map(|l| l.unwrap()) {
+            if line.starts_with("mwt ") {
+                let stream_result: xge_lib::StreamResult =
+                    serde_json::from_str(&line[4..]).unwrap();
+                let ti = TestInput {
+                    id: "todo".to_string(),
+                    rel_path: None,
+                };
+                let result = TestCommandResult {
+                    exit_code: stream_result.exit_code,
+                    stdout: stream_result.stdout,
+                };
+                tx.send(("todo".to_string(), ti, result));
+            }
         }
+        println!("done");
         break;
     }
     Ok(())
 }
 
 struct RunConfig {
+    verbose: bool,
     parallel: bool,
+    xge: bool,
 }
 fn cmd_run(
     input_paths: &config::InputPaths,
@@ -269,17 +302,25 @@ fn cmd_run(
     let pool = ThreadPool::new(n_workers);
     let (tx, rx) = std::sync::mpsc::channel();
 
-    for (test_name, commands) in &tests {
-        for (input, cmd_creator) in commands {
-            let test_name_copy = test_name.to_string();
-            let input_copy = input.clone();
-            let cmd = cmd_creator().clone();
-            let tx = tx.clone();
-            pool.execute(move || {
-                let output = run_command(&cmd);
-                tx.send((test_name_copy, input_copy, output))
-                    .expect("channel did not accept test result!");
-            });
+    if run_config.xge {
+        let ok = run_xge(&tests, &tx);
+        if !ok.is_ok() {
+            println!("XGE error: {}", ok.err().unwrap());
+            std::process::exit(-1);
+        }
+    } else {
+        for (test_name, commands) in &tests {
+            for (input, cmd_creator) in commands {
+                let test_name_copy = test_name.to_string();
+                let input_copy = input.clone();
+                let cmd = cmd_creator().clone();
+                let tx = tx.clone();
+                pool.execute(move || {
+                    let output = run_command(&cmd);
+                    tx.send((test_name_copy, input_copy, output))
+                        .expect("channel did not accept test result!");
+                });
+            }
         }
     }
 
@@ -292,15 +333,27 @@ fn cmd_run(
         i += 1;
         xml_report.add(&test_name, &input.id, &output);
         if output.exit_code == 0 {
-            let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &input.id);
-            print!("{:width$}", line, width = width);
-            io::stdout().flush().unwrap();
+            if run_config.verbose {
+                println!(
+                    "[{}/{}] Ok: {} --id \"{}\"\n{}",
+                    i, n, &test_name, &input.id, &output.stdout
+                );
+            } else {
+                let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &input.id);
+                print!("{:width$}", line, width = width);
+                io::stdout().flush().unwrap();
+            }
         } else {
-            println!("Failed: {}\n{}", input.id, output.stdout);
+            println!(
+                "[{}/{}] Failed: {} --id {}\n{}",
+                i, n, &test_name, &input.id, &output.stdout
+            );
         }
     }
+    if !run_config.verbose {
+        println!();
+    }
     xml_report.write().expect("failed to write report!");
-    println!();
 }
 
 fn populate_test_groups(
@@ -418,10 +471,15 @@ fn main() {
             SubCommand::with_name("run")
                 .arg(test_app_arg)
                 .arg(filter_arg)
+                .arg(Arg::with_name("verbose")
+                    .short("v")
+                    .long("verbose"))
                 .arg(Arg::with_name("threadpool")
                     .short("p")
                     .long("parallel")
-                    .help("run using local thread pool")),
+                    .help("run using local thread pool"))
+                .arg(Arg::with_name("xge")
+                    .long("xge")),
         ).get_matches();
 
     let root_dir = std::env::current_exe()
@@ -456,7 +514,9 @@ fn main() {
         }
         std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
         let run_config = RunConfig {
+            verbose: matches.is_present("verbose"),
             parallel: matches.is_present("threadpool"),
+            xge: matches.is_present("xge"),
         };
         cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
     }
