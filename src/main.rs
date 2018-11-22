@@ -9,12 +9,11 @@ extern crate xge_lib;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
-#[macro_use]
 extern crate serde_json;
 use clap::{App, Arg, SubCommand};
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use threadpool::ThreadPool;
@@ -221,60 +220,33 @@ fn run_xge(
     tests: &HashMap<&str, Vec<(TestInput, Box<CommandGenerator>)>>,
     tx: &std::sync::mpsc::Sender<(String, TestInput, TestCommandResult)>,
 ) -> std::io::Result<()> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    let xge_exe = PathBuf::from(
-        std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("xge"),
-    );
-    let mut xge_client = std::process::Command::new(xge_exe)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .arg("client")
-        .arg(format!("127.0.0.1:{}", port))
-        .spawn()
-        .expect("could not spawn XGE client!");
-    for stream in listener.incoming() {
-        {
-            let mut writer = std::io::BufWriter::new(stream?);
-            for (test_name, commands) in tests {
-                for (input, cmd_creator) in commands {
-                    let cmd = cmd_creator();
-                    let request = xge_lib::StreamRequest {
-                        id: 1234,
-                        title: input.id.clone(),
-                        cwd: cmd.cwd,
-                        command: cmd.command,
-                        local: false,
-                    };
-                    writer.write(serde_json::to_string(&request)?.as_bytes())?;
-                    writer.write(b"\n")?;
-                    writer.flush()?;
-                }
-            }
+    let mut xge = xge_lib::XGE::new();
+    let mut issued_commands: Vec<(&str, &TestInput)> = Vec::new();
+    for (test_name, commands) in tests {
+        for (input, cmd_creator) in commands {
+            let cmd = cmd_creator();
+            let request = xge_lib::StreamRequest {
+                id: issued_commands.len() as u64,
+                title: input.id.clone(),
+                cwd: cmd.cwd,
+                command: cmd.command,
+                local: false,
+            };
+            issued_commands.push((&test_name, &input));
+            xge.run(&request)
+                .expect("error in xge.run(): could not send command");
         }
-        println!("listening");
-        let reader = std::io::BufReader::new(xge_client.stdout.as_mut().unwrap());
-        for line in reader.lines().map(|l| l.unwrap()) {
-            if line.starts_with("mwt ") {
-                let stream_result: xge_lib::StreamResult =
-                    serde_json::from_str(&line[4..]).unwrap();
-                let ti = TestInput {
-                    id: "todo".to_string(),
-                    rel_path: None,
-                };
-                let result = TestCommandResult {
-                    exit_code: stream_result.exit_code,
-                    stdout: stream_result.stdout,
-                };
-                tx.send(("todo".to_string(), ti, result));
-            }
-        }
-        println!("done");
-        break;
+    }
+    xge.done()
+        .expect("error in xge.done(): could not close socket");
+    for stream_result in xge.results() {
+        let command = issued_commands[stream_result.id as usize];
+        let result = TestCommandResult {
+            exit_code: stream_result.exit_code,
+            stdout: stream_result.stdout,
+        };
+        tx.send((command.0.to_string(), command.1.clone(), result))
+            .expect("error in mpsc: could not send result");
     }
     Ok(())
 }
