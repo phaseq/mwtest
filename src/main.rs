@@ -49,7 +49,7 @@ struct OutputPaths {
     tmp_dir: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TestCommand {
     command: Vec<String>,
     cwd: String,
@@ -95,37 +95,40 @@ fn run_command(command: &TestCommand) -> TestCommandResult {
     }
 }
 
-fn create_run_commands(
+fn create_run_commands<'a>(
     input_paths: &config::InputPaths,
-    test_apps: &Vec<TestApp>,
+    test_apps: &'a Vec<TestApp>,
     output_paths: &OutputPaths,
-) -> Vec<(TestInput, Box<CommandGenerator>)> {
+) -> HashMap<&'a str, Vec<(TestInput, Box<CommandGenerator>)>> {
     test_apps
         .iter()
-        .flat_map(|test_app: &TestApp| {
-            test_app
-                .tests
-                .iter()
-                .flat_map(|(_test_group, inputs)| inputs)
-                .map(|input: &TestInput| {
-                    let file_name = input
-                        .rel_path
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned();
-                    let full_path = input_paths.testcases_dir.join(&input.rel_path);
-                    let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
-                    (
-                        input.clone(),
-                        to_command(
-                            &test_app.command_template,
-                            file_name,
-                            cwd,
-                            output_paths.tmp_dir.clone(),
-                        ),
-                    )
-                }).collect::<Vec<(TestInput, Box<CommandGenerator>)>>()
+        .map(|test_app: &TestApp| {
+            (
+                test_app.name.as_str(),
+                test_app
+                    .tests
+                    .iter()
+                    .flat_map(|(_test_group, inputs)| inputs)
+                    .map(|input: &TestInput| {
+                        let file_name = input
+                            .rel_path
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned();
+                        let full_path = input_paths.testcases_dir.join(&input.rel_path);
+                        let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
+                        (
+                            input.clone(),
+                            to_command(
+                                &test_app.command_template,
+                                file_name,
+                                cwd,
+                                output_paths.tmp_dir.clone(),
+                            ),
+                        )
+                    }).collect::<Vec<(TestInput, Box<CommandGenerator>)>>(),
+            )
         }).collect()
 }
 
@@ -195,7 +198,7 @@ fn cmd_run(
     output_paths: &OutputPaths,
     run_config: &RunConfig,
 ) {
-    let commands = create_run_commands(&input_paths, &test_apps, &output_paths);
+    let tests = create_run_commands(&input_paths, &test_apps, &output_paths);
 
     let (width, _) = term_size::dimensions().unwrap();
 
@@ -207,26 +210,30 @@ fn cmd_run(
     let pool = ThreadPool::new(n_workers);
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let n = commands.len();
-    for (input, cmd_creator) in commands {
-        let cmd = cmd_creator();
-        let tx = tx.clone();
-        pool.execute(move || {
-            let output = run_command(&cmd);
-            tx.send((input, output))
-                .expect("channel did not accept test result!");
-        });
+    for (test_name, commands) in &tests {
+        for (input, cmd_creator) in commands {
+            let test_name_copy = test_name.to_string();
+            let input_copy = input.clone();
+            let cmd = cmd_creator().clone();
+            let tx = tx.clone();
+            pool.execute(move || {
+                let output = run_command(&cmd);
+                tx.send((test_name_copy, input_copy, output))
+                    .expect("channel did not accept test result!");
+            });
+        }
     }
 
     let mut xml_report = XmlReport::create(&output_paths.out_dir.join("results.xml"))
         .expect("could not create test report!");
 
+    let n = tests.values().map(|v| v.len()).sum();
     let mut i = 0;
-    for (input, output) in rx.iter().take(n) {
+    for (test_name, input, output) in rx.iter().take(n) {
         i += 1;
-        xml_report.add("todo", &input.id, &output);
+        xml_report.add(&test_name, &input.id, &output);
         if output.exit_code == 0 {
-            let line = format!("\r[{}/{}] Ok: {}", i, n, input.id);
+            let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &input.id);
             print!("{:width$}", line, width = width);
             io::stdout().flush().unwrap();
         } else {
