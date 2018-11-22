@@ -1,15 +1,15 @@
 mod config;
-
 extern crate clap;
-//extern crate termion;
+extern crate term_size;
+extern crate threadpool;
 extern crate uuid;
 use clap::{App, Arg, SubCommand};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use threadpool::ThreadPool;
 use uuid::Uuid;
-//use threadpool::ThreadPool;
 
 #[macro_use]
 extern crate serde_derive;
@@ -126,29 +126,54 @@ fn create_run_commands(
         }).collect()
 }
 
-fn cmd_run(input_paths: &config::InputPaths, test_apps: &Vec<TestApp>, output_paths: &OutputPaths) {
+struct RunConfig {
+    parallel: bool,
+}
+fn cmd_run(
+    input_paths: &config::InputPaths,
+    test_apps: &Vec<TestApp>,
+    output_paths: &OutputPaths,
+    run_config: &RunConfig,
+) {
     let commands = create_run_commands(&input_paths, &test_apps, &output_paths);
 
-    let (width, _) = (100, 0); //termion::terminal_size().unwrap();
+    let (width, _) = term_size::dimensions().unwrap();
+
+    let n_workers = 4;
+    let pool = ThreadPool::new(n_workers);
+    let (tx, rx) = std::sync::mpsc::channel();
 
     let mut i = 0;
     let n = commands.len();
-    for (input, cmd) in commands {
-        let output = run_command(&cmd());
+
+    let mut print_handler = |input: &TestInput, output: &TestCommandResult| {
         i += 1;
         if output.exit_code == 0 {
-            let mut line = format!(
-                "\r{}[{}/{}] Ok: {}",
-                "", //termion::clear::AfterCursor,
-                i,
-                n,
-                input.id
-            );
-            line.truncate(width as usize);
-            print!("{}", line);
+            let line = format!("\r[{}/{}] Ok: {}", i, n, input.id);
+            print!("{:width$}", line, width = width);
             io::stdout().flush().unwrap();
         } else {
             println!("Failed: {}\n{}", input.id, output.stdout);
+        }
+    };
+
+    for (input, cmd_creator) in commands {
+        let cmd = cmd_creator();
+        if run_config.parallel {
+            let tx = tx.clone();
+            pool.execute(move || {
+                let output = run_command(&cmd);
+                tx.send((input, output))
+                    .expect("channel did not accept test result!");
+            });
+        } else {
+            let output = run_command(&cmd);
+            print_handler(&input, &output);
+        }
+    }
+    if run_config.parallel {
+        for (input, output) in rx.iter().take(n) {
+            print_handler(&input, &output);
         }
     }
     println!();
@@ -284,7 +309,11 @@ fn main() {
         ).subcommand(
             SubCommand::with_name("run")
                 .arg(test_app_arg)
-                .arg(filter_arg),
+                .arg(filter_arg)
+                .arg(Arg::with_name("threadpool")
+                    .short("p")
+                    .long("parallel")
+                    .help("run using local thread pool")),
         ).get_matches();
 
     let root_dir = std::env::current_exe()
@@ -317,6 +346,9 @@ fn main() {
                 .expect("could not clean up tmp directory!");
         }
         std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
-        cmd_run(&input_paths, &test_apps, &output_paths);
+        let run_config = RunConfig {
+            parallel: matches.is_present("threadpool"),
+        };
+        cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
     }
 }
