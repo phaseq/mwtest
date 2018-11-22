@@ -1,4 +1,5 @@
 mod config;
+extern crate bufstream;
 extern crate clap;
 extern crate htmlescape;
 extern crate num_cpus;
@@ -8,11 +9,12 @@ extern crate uuid;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
+#[macro_use]
 extern crate serde_json;
 use clap::{App, Arg, SubCommand};
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use threadpool::ThreadPool;
@@ -54,7 +56,7 @@ struct OutputPaths {
 struct TestCommand {
     command: Vec<String>,
     cwd: String,
-    tmp_dir: String,
+    tmp_dir: Option<String>,
 }
 type CommandGenerator = Fn() -> TestCommand;
 
@@ -82,13 +84,10 @@ fn run_command(command: &TestCommand) -> TestCommandResult {
     let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
     let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
     let output_str = stderr.to_owned() + stdout;
-    if !std::fs::read_dir(&command.tmp_dir)
-        .unwrap()
-        .next()
-        .is_some()
-    {
-        std::fs::remove_dir(&command.tmp_dir)
-            .expect("could not remove test's empty tmp directory!");
+    if let Some(tmp_dir) = &command.tmp_dir {
+        if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
+            std::fs::remove_dir(&tmp_dir).expect("could not remove test's empty tmp directory!");
+        }
     }
     TestCommandResult {
         exit_code: exit_code,
@@ -140,17 +139,25 @@ fn to_command(
     tmp_root: PathBuf,
 ) -> Box<CommandGenerator> {
     let command = command_template.apply("{{input_path}}", &input);
-    Box::new(move || {
-        let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
-        let tmp_path = tmp_dir.to_string_lossy().into_owned();
-        let command = command.apply("{{tmp_path}}", &tmp_path);
-        std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
-        TestCommand {
+    if command.tokens.iter().any(|t| t == "{{tmp_path}}") {
+        Box::new(move || {
+            let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
+            let tmp_path = tmp_dir.to_string_lossy().into_owned();
+            let command = command.apply("{{tmp_path}}", &tmp_path);
+            std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
+            TestCommand {
+                command: command.tokens.clone(),
+                cwd: cwd.to_string(),
+                tmp_dir: Some(tmp_path),
+            }
+        })
+    } else {
+        Box::new(move || TestCommand {
             command: command.tokens.clone(),
             cwd: cwd.to_string(),
-            tmp_dir: tmp_path,
-        }
-    })
+            tmp_dir: None,
+        })
+    }
 }
 
 struct XmlReport {
@@ -208,6 +215,37 @@ impl XmlReport {
         out.write(b"</testsuites>")?;
         Ok(())
     }
+}
+
+fn run_xge(tests: &HashMap<&str, Vec<(TestInput, Box<CommandGenerator>)>>) -> std::io::Result<()> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let xge_client = std::process::Command::new("xge.exe")
+        .arg("client")
+        .arg(format!("127.0.0.1:{}", port))
+        .spawn()
+        .expect("could not spawn XGE client!");
+    // accept connections and process them serially
+    for stream in listener.incoming() {
+        let mut bufstream = bufstream::BufStream::new(stream?);
+        for (test_name, commands) in tests {
+            for (input, cmd_creator) in commands {
+                let cmd = cmd_creator();
+                bufstream.write(b"l")?;
+                bufstream.write(
+                    json!(vec![cmd.cwd, input.id.clone()].extend(cmd.command))
+                        .to_string()
+                        .as_bytes(),
+                )?;
+                bufstream.write(b"\n")?;
+            }
+        }
+        for result_line in bufstream.lines() {
+            println!("{}", result_line?);
+        }
+        break;
+    }
+    Ok(())
 }
 
 struct RunConfig {
