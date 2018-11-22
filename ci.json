@@ -1,13 +1,25 @@
 {
   "verifier": [
     {
-      "find": "glob:cutsim/_servertest/verifier/smoke/**/*.verytest.ini",
+      "find_glob": "cutsim/_servertest/verifier/smoke/**/*.verytest.ini",
       "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini"
+    }
+  ],
+  "verifierUnit": [
+    {
+      "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*-*Nightly*:*RunLocal*"],
+      "id_pattern": "(.*)"
+    }
+  ],
+  "verifierApi": [
+    {
+      "find_gtest": ["{{mwVerifierApiTest}}", "--gtest_list_tests", "--gtest_filter=*-*Nightly*:*RunLocal*"],
+      "id_pattern": "(.*)"
     }
   ],
   "machsim": [
     {
-      "find": "glob:machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
+      "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
       "id_pattern": "machsim/MachSimTestCases/(.*)",
       "matches_parent_dir": true
     }

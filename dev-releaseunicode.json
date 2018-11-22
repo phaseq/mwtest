@@ -1,5 +1,9 @@
 {
 	"{{mwVerifierTest}}": "5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
 	"{{mwVerifierDll}}": "5axis/customer/quickstart/mwVerifier.dll",
+	"{{mwVerifierUnitTest}}": "5axis/customer/quickstart/mwVerifierUnitTest.exe",
+	"{{mwVerifierUnitTestCWD}}": "mwcutsim/mwVerifierUnitTest/RunDir",
+	"{{mwVerifierApiTest}}": "5axis/customer/quickstart/mwVerifierApiTest.exe",
+	"{{mwVerifierApiTestCWD}}": "mwcutsim/mwVerifierApiTest/RunDir",
 	"{{machsimtest}}": "5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe"
 }

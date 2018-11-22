@@ -22,6 +22,7 @@ use uuid::Uuid;
 struct TestApp {
     name: String,
     command_template: CommandTemplate,
+    cwd: Option<String>,
     tests: Vec<PopulatedTestGroup>,
 }
 
@@ -30,7 +31,7 @@ type PopulatedTestGroup = (config::TestGroup, Vec<TestInput>);
 #[derive(Debug, Clone)]
 pub struct TestInput {
     pub id: String,
-    pub rel_path: PathBuf,
+    pub rel_path: Option<PathBuf>,
 }
 
 fn cmd_list(test_apps: &Vec<TestApp>) {
@@ -64,14 +65,14 @@ struct TestCommandResult {
 }
 
 fn run_command(command: &TestCommand) -> TestCommandResult {
-    let maybe_output = Command::new(&command.command[0])
+    let maybe_output = Command::new(&command.command[0].replace('/', "\\"))
         .args(command.command[1..].iter())
         .current_dir(&command.cwd)
         .output();
     if maybe_output.is_err() {
         println!(
-            "failed to run test command \"{}\": {}\nDid you forget to build?",
-            &command.command[0],
+            "failed to run test command \"{:?}\": {}\nDid you forget to build?",
+            &command.command,
             maybe_output.err().unwrap()
         );
         std::process::exit(-1);
@@ -109,20 +110,21 @@ fn create_run_commands<'a>(
                     .tests
                     .iter()
                     .flat_map(|(_test_group, inputs)| inputs)
-                    .map(|input: &TestInput| {
-                        let file_name = input
-                            .rel_path
-                            .file_name()
-                            .unwrap()
-                            .to_string_lossy()
-                            .into_owned();
-                        let full_path = input_paths.testcases_dir.join(&input.rel_path);
-                        let cwd = full_path.parent().unwrap().to_string_lossy().to_string();
+                    .map(|test_input: &TestInput| {
+                        let mut input = test_input.id.clone();
+                        let cwd;
+                        if let Some(rel_path) = &test_input.rel_path {
+                            input = rel_path.file_name().unwrap().to_string_lossy().into_owned();
+                            let full_path = input_paths.testcases_dir.join(&rel_path);
+                            cwd = full_path.parent().unwrap().to_string_lossy().to_string();
+                        } else {
+                            cwd = test_app.cwd.clone().expect("no cwd defined!");
+                        }
                         (
-                            input.clone(),
+                            test_input.clone(),
                             to_command(
                                 &test_app.command_template,
-                                file_name,
+                                input,
                                 cwd,
                                 output_paths.tmp_dir.clone(),
                             ),
@@ -130,6 +132,25 @@ fn create_run_commands<'a>(
                     }).collect::<Vec<(TestInput, Box<CommandGenerator>)>>(),
             )
         }).collect()
+}
+fn to_command(
+    command_template: &CommandTemplate,
+    input: String,
+    cwd: String,
+    tmp_root: PathBuf,
+) -> Box<CommandGenerator> {
+    let command = command_template.apply("{{input_path}}", &input);
+    Box::new(move || {
+        let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
+        let tmp_path = tmp_dir.to_string_lossy().into_owned();
+        let command = command.apply("{{tmp_path}}", &tmp_path);
+        std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
+        TestCommand {
+            command: command.tokens.clone(),
+            cwd: cwd.to_string(),
+            tmp_dir: tmp_path,
+        }
+    })
 }
 
 struct XmlReport {
@@ -255,7 +276,7 @@ fn populate_test_groups(
             (
                 test_group.clone(),
                 test_group
-                    .generate_test_inputs(&input_paths.testcases_dir)
+                    .generate_test_inputs(&input_paths)
                     .into_iter()
                     .filter(|f| id_filter(&f.id))
                     .collect(),
@@ -273,7 +294,7 @@ impl CommandTemplate {
             tokens: self
                 .tokens
                 .iter()
-                .map(|t| if t == from { to.to_string() } else { t.clone() })
+                .map(|t| t.to_owned().replace(from, to))
                 .collect(),
         }
     }
@@ -282,35 +303,13 @@ impl CommandTemplate {
             tokens: self
                 .tokens
                 .iter()
-                .map(|t| {
-                    if let Some(value) = patterns.get(t) {
-                        value.clone()
-                    } else {
-                        t.clone()
-                    }
+                .map(|t: &String| {
+                    patterns
+                        .iter()
+                        .fold(t.to_owned(), |acc, (k, v)| acc.replace(k, v))
                 }).collect(),
         }
     }
-}
-
-fn to_command(
-    command_template: &CommandTemplate,
-    input_path: String,
-    cwd: String,
-    tmp_root: PathBuf,
-) -> Box<CommandGenerator> {
-    let command = command_template.apply("{{input_path}}", &input_path);
-    Box::new(move || {
-        let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
-        let tmp_path = tmp_dir.to_string_lossy().into_owned();
-        let command = command.apply("{{tmp_path}}", &tmp_path);
-        std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
-        TestCommand {
-            command: command.tokens.clone(),
-            cwd: cwd.to_string(),
-            tmp_dir: tmp_path,
-        }
-    })
 }
 
 fn test_apps_from_args(
@@ -345,6 +344,12 @@ fn test_apps_from_args(
             TestApp {
                 name: test_name.to_string(),
                 command_template: command_template,
+                cwd: config
+                    .unwrap()
+                    .cwd
+                    .as_ref()
+                    .map(|c| input_paths.exe_paths[c].clone())
+                    .clone(),
                 tests: populate_test_groups(input_paths, &test_group_file[test_name], &id_filter),
             }
         }).collect()

@@ -7,6 +7,20 @@
       "--out-dir", "{{tmp_path}}"
     ]
   },
+  "verifierUnit": {
+    "command": [
+      "{{mwVerifierUnitTest}}",
+      "--gtest_filter", "{{input_path}}"
+    ],
+    "cwd": "{{mwVerifierUnitTestCWD}}"
+  },
+  "verifierApi": {
+    "command": [
+      "{{mwVerifierApiTest}}",
+      "--gtest_filter={{input_path}}"
+    ],
+    "cwd": "{{mwVerifierApiTestCWD}}"
+  },
   "machsim": {
     "command": [
       "{{machsimtest}}", "newmode",

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Deserialize)]
 pub struct TestConfig {
     pub command: Vec<String>,
+    pub cwd: Option<String>,
 }
 pub type TestConfigFile = HashMap<String, TestConfig>;
 pub fn read_test_config_file(path: &str) -> Result<TestConfigFile, Box<std::error::Error>> {
@@ -25,47 +26,81 @@ fn read_build_file(path: &str) -> Result<BuildFile, Box<std::error::Error>> {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestGroup {
-    pub find: String,
+    pub find_glob: Option<String>,
+    pub find_gtest: Option<Vec<String>>,
     pub id_pattern: String,
     pub matches_parent_dir: Option<bool>,
 }
 impl TestGroup {
-    pub fn generate_test_inputs(&self, testcases_root: &Path) -> Vec<::TestInput> {
+    pub fn generate_test_inputs(&self, input_paths: &InputPaths) -> Vec<::TestInput> {
         let re = regex::Regex::new(&self.id_pattern).unwrap();
-        self.generate_paths(&testcases_root)
-            .iter()
+        if let Some(rel_path) = &self.find_glob {
+            self.generate_paths(&rel_path, &input_paths.testcases_dir)
+                .iter()
+                .map(|rel_path| {
+                    let id = re
+                        .captures(&rel_path)
+                        .expect("pattern did not match on one of the tests!")
+                        .get(1)
+                        .map_or("", |m| m.as_str());
+
+                    ::TestInput {
+                        id: id.to_string(),
+                        rel_path: Some(PathBuf::from(rel_path)),
+                    }
+                }).collect()
+        } else if let Some(filter) = &self.find_gtest {
+            let cmd = &input_paths
+                .exe_paths
+                .get(filter[0].as_str())
+                .expect("could not find find_gtest executable!");
+            let output = std::process::Command::new(cmd)
+                .args(filter[1..].iter())
+                .output()
+                .expect("failed to gather tests!");
+            let output: &str = std::str::from_utf8(&output.stdout)
+                .expect("could not decode find_gtest output as utf-8!");
+            let mut group = String::new();
+            let mut results = Vec::new();
+            for line in output
+                .lines()
+                .filter(|l| !l.contains("DISABLED"))
+                .map(|l| l.split('#').next().unwrap())
+            {
+                if !line.starts_with(' ') {
+                    group = line.trim().to_string();
+                } else {
+                    let test_id = group.clone() + line.trim();
+                    results.push(::TestInput {
+                        id: test_id,
+                        rel_path: None,
+                    });
+                }
+            }
+            results
+        } else {
+            panic!("no test generator defined!");
+        }
+    }
+    fn generate_paths(&self, rel_path: &str, testcases_root: &Path) -> Vec<String> {
+        let matches_parent_dir = self.matches_parent_dir.map_or(false, |b| b);
+        let abs_path = testcases_root.join(rel_path).to_string_lossy().into_owned();
+        glob::glob(&abs_path)
+            .expect("failed to read glob pattern!")
+            .map(|p| p.unwrap())
             .map(|p| {
+                if matches_parent_dir {
+                    PathBuf::from(p.parent().unwrap())
+                } else {
+                    p
+                }
+            }).map(|p| {
                 let rel_path_buf = p.strip_prefix(testcases_root).unwrap().to_path_buf();
-                let rel_path = rel_path_buf
+                rel_path_buf
                     .to_string_lossy()
                     .to_string()
-                    .replace('\\', "/");
-                let id = re
-                    .captures(&rel_path)
-                    .expect("pattern did not match on one of the tests!")
-                    .get(1)
-                    .map_or("", |m| m.as_str());
-
-                ::TestInput {
-                    id: id.to_string(),
-                    rel_path: rel_path_buf,
-                }
+                    .replace('\\', "/")
             }).collect()
-    }
-    fn generate_paths(&self, testcases_root: &Path) -> Vec<PathBuf> {
-        let pattern: Vec<&str> = self.find.split(':').collect();
-        let rel_path = testcases_root
-            .join(pattern[1])
-            .to_string_lossy()
-            .into_owned();
-        let paths = glob::glob(&rel_path)
-            .expect("failed to read glob pattern!")
-            .map(|s| s.unwrap());
-        if self.matches_parent_dir.map_or(false, |b| b) {
-            paths.map(|s| PathBuf::from(s.parent().unwrap())).collect()
-        } else {
-            paths.collect()
-        }
     }
 }
 
