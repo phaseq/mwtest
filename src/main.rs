@@ -249,6 +249,7 @@ fn cmd_run(
         }
         drop(xge_tx);
 
+        let mut txt_report = report::FileLogger::create(&output_paths.out_dir);
         let mut xml_report = report::XmlReport::create(&output_paths.out_dir.join("results.xml"))
             .expect("could not create test report!");
 
@@ -261,6 +262,7 @@ fn cmd_run(
         let mut i = 0;
         for (test_name, input, output) in rx.iter().take(n) {
             i += 1;
+            txt_report.add(&test_name, &output.stdout);
             xml_report.add(&test_name, &input.id, &output);
             stdout_report.add(i, n, &test_name, &input.id, &output);
         }

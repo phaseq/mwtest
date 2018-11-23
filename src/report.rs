@@ -1,7 +1,7 @@
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct XmlReport {
     file: File,
@@ -92,5 +92,28 @@ impl Drop for StdOut {
         if !self.verbose {
             println!();
         }
+    }
+}
+
+pub struct FileLogger<'a> {
+    log_dir: PathBuf,
+    files: HashMap<&'a str, File>,
+}
+impl<'a> FileLogger<'a> {
+    pub fn create(log_dir: &Path) -> FileLogger {
+        FileLogger {
+            log_dir: log_dir.to_path_buf(),
+            files: HashMap::new(),
+        }
+    }
+    pub fn add(&mut self, test_name: &'a str, output: &str) {
+        let log_dir = &self.log_dir;
+        let log_file = self.files.entry(test_name).or_insert_with(|| {
+            File::create(log_dir.join(PathBuf::from(test_name.to_owned() + ".txt")))
+                .expect("could not create log file!")
+        });
+        log_file
+            .write(output.as_bytes())
+            .expect("could not write to log file!");
     }
 }
