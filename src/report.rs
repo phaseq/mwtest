@@ -64,32 +64,27 @@ pub struct StdOut {
     pub verbose: bool,
 }
 impl StdOut {
-    pub fn add(
-        &self,
-        i: usize,
-        n: usize,
-        test_name: &str,
-        test_id: &str,
-        test_result: &::TestCommandResult,
-    ) {
-        let (width, _) = term_size::dimensions().unwrap();
-        if test_result.exit_code == 0 {
-            if self.verbose {
-                println!(
-                    "[{}/{}] Ok: {} --id \"{}\"\n{}",
-                    i, n, &test_name, &test_id, &test_result.stdout
-                );
-            } else {
-                let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &test_id);
-                print!("{:width$}", line, width = width);
-                std::io::stdout().flush().unwrap();
-            }
+    pub fn init(&self, i: usize, n: usize) {
+        print!("[{}/{}] waiting for results...", i, n);
+        std::io::stdout().flush().unwrap();
+    }
+    pub fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &::TestCommandResult) {
+        let ok_or_failed = if result.exit_code == 0 {
+            "Ok"
         } else {
-            println!(
-                "[{}/{}] Failed: {} --id {}\n{}",
-                i, n, &test_name, &test_id, &test_result.stdout
-            );
+            "Failed"
+        };
+        let mut line = format!(
+            "\r[{}/{}] {}: {} --id \"{}\"",
+            i, n, ok_or_failed, &name, &id
+        );
+        let (width, _) = term_size::dimensions().unwrap();
+        line.truncate(width);
+        print!("{:width$}", line, width = width);
+        if result.exit_code != 0 || self.verbose {
+            println!("\n{}\n", &result.stdout);
         }
+        std::io::stdout().flush().unwrap();
     }
 }
 impl Drop for StdOut {

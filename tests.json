@@ -29,5 +29,9 @@
       "--tmp-dir", "{{tmp_path}}",
       "--stand-alone", "1"
     ]
+  },
+  "cncsim": {
+    "command": ["{{mwCNCSimTest}}", "{{input_path}}", "-log", "{{tmp_path}}"],
+    "cwd": "{{mwCNCSimTestCWD}}"
   }
 }

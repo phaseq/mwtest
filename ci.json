@@ -23,5 +23,19 @@
       "id_pattern": "machsim/MachSimTestCases/(.*)",
       "matches_parent_dir": true
     }
+  ],
+  "cncsim": [
+    {
+      "find_glob": "cncsim/ReferenceFiles/GeneratedCNCFiles/**/*.cnclog",
+      "id_pattern": "cncsim/ReferenceFiles/(.*)"
+    },
+    {
+      "find_glob": "cncsim/TestCases/**/*.cnclog",
+      "id_pattern": "cncsim/TestCases/(.*)"
+    },
+    {
+      "find_glob": "cncsim/CNCSimReferenceFiles/**/*.cnclog",
+      "id_pattern": "cncsim/CNCSimReferenceFiles/(.*)"
+    }
   ]
 }

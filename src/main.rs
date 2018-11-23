@@ -109,20 +109,24 @@ fn create_run_commands<'a>(
                     .flat_map(|(_test_group, inputs)| inputs)
                     .map(|test_input: &TestInput| {
                         let mut input = test_input.id.clone();
-                        let cwd;
+                        let mut cwd = test_app.cwd.clone();
                         if let Some(rel_path) = &test_input.rel_path {
-                            input = rel_path.file_name().unwrap().to_string_lossy().into_owned();
                             let full_path = input_paths.testcases_dir.join(&rel_path);
-                            cwd = full_path.parent().unwrap().to_string_lossy().to_string();
-                        } else {
-                            cwd = test_app.cwd.clone().expect("no cwd defined!");
+                            if cwd.is_none() {
+                                input =
+                                    rel_path.file_name().unwrap().to_string_lossy().into_owned();
+                                cwd =
+                                    Some(full_path.parent().unwrap().to_string_lossy().to_string());
+                            } else {
+                                input = full_path.to_string_lossy().into_owned();
+                            }
                         }
                         (
                             test_input.clone(),
                             to_command(
                                 &test_app.command_template,
                                 input,
-                                cwd,
+                                cwd.expect("no cwd defined!"),
                                 output_paths.tmp_dir.clone(),
                             ),
                         )
@@ -199,6 +203,7 @@ struct RunConfig {
     verbose: bool,
     parallel: bool,
     xge: bool,
+    repeat: usize,
 }
 fn cmd_run(
     input_paths: &config::InputPaths,
@@ -225,29 +230,34 @@ fn cmd_run(
         }
         for (test_name, commands) in &tests {
             for (input, cmd_creator) in commands {
-                let cmd = cmd_creator().clone();
-                if run_config.xge {
-                    xge_tx
-                        .send((test_name, input, cmd))
-                        .expect("channel did not accept test input!");
-                } else {
-                    let tx = tx.clone();
-                    scoped.execute(move || {
-                        let output = run_command(&cmd);
-                        tx.send((test_name, input, output))
-                            .expect("channel did not accept test result!");
-                    });
+                for _ in 0..run_config.repeat {
+                    let cmd = cmd_creator().clone();
+                    if run_config.xge {
+                        xge_tx
+                            .send((test_name, input, cmd))
+                            .expect("channel did not accept test input!");
+                    } else {
+                        let tx = tx.clone();
+                        scoped.execute(move || {
+                            let output = run_command(&cmd);
+                            tx.send((test_name, input, output))
+                                .expect("channel did not accept test result!");
+                        });
+                    }
                 }
             }
         }
+        drop(xge_tx);
 
         let mut xml_report = report::XmlReport::create(&output_paths.out_dir.join("results.xml"))
             .expect("could not create test report!");
+
+        let n = tests.values().map(|v| v.len()).sum::<usize>() * run_config.repeat;
         let stdout_report = report::StdOut {
             verbose: run_config.verbose,
         };
+        stdout_report.init(0, n);
 
-        let n = tests.values().map(|v| v.len()).sum();
         let mut i = 0;
         for (test_name, input, output) in rx.iter().take(n) {
             i += 1;
@@ -381,7 +391,11 @@ fn main() {
                     .long("parallel")
                     .help("run using local thread pool"))
                 .arg(Arg::with_name("xge")
-                    .long("xge")),
+                    .long("xge"))
+                .arg(Arg::with_name("repeat")
+                    .long("repeat")
+                    .takes_value(true)
+                    .default_value("1")),
         ).get_matches();
 
     let root_dir = std::env::current_exe()
@@ -420,6 +434,11 @@ fn main() {
             verbose: matches.is_present("verbose"),
             parallel: matches.is_present("threadpool"),
             xge: matches.is_present("xge"),
+            repeat: matches
+                .value_of("repeat")
+                .unwrap()
+                .parse()
+                .expect("expected numeric value for repeat"),
         };
         cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
     }
