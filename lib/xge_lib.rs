@@ -35,10 +35,6 @@ impl<'a> XGE {
                 .to_str()
                 .unwrap(),
         );
-        println!(
-            "{}",
-            format!("/command=\"{} client 127.0.0.1:{}\"", xge_exe, port)
-        );
         let client_process = std::process::Command::new("powershell.exe")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
