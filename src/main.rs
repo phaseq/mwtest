@@ -1,4 +1,5 @@
 mod config;
+mod report;
 extern crate clap;
 extern crate htmlescape;
 extern crate num_cpus;
@@ -12,9 +13,7 @@ extern crate serde;
 extern crate serde_json;
 use clap::{App, Arg, SubCommand};
 use scoped_threadpool::Pool;
-use std::collections::{hash_map, HashMap};
-use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
@@ -60,7 +59,7 @@ struct TestCommand {
 type CommandGenerator = Fn() -> TestCommand;
 
 #[derive(Debug, Clone)]
-struct TestCommandResult {
+pub struct TestCommandResult {
     exit_code: i32,
     stdout: String,
 }
@@ -159,63 +158,6 @@ fn to_command(
     }
 }
 
-struct XmlReport {
-    file: File,
-    results: HashMap<String, Vec<(String, TestCommandResult)>>,
-}
-impl XmlReport {
-    fn create(path: &Path) -> std::io::Result<XmlReport> {
-        Ok(XmlReport {
-            file: File::create(&path)?,
-            results: HashMap::new(),
-        })
-    }
-    fn add(&mut self, test_name: &str, test_id: &str, test_result: &TestCommandResult) {
-        match self.results.entry(test_name.to_string()) {
-            hash_map::Entry::Vacant(e) => {
-                e.insert(vec![(test_id.to_string(), test_result.clone())]);
-            }
-            hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().push((test_id.to_string(), test_result.clone()));
-            }
-        }
-    }
-    fn write(&mut self) -> std::io::Result<()> {
-        let mut out = BufWriter::new(&self.file);
-        out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
-        out.write(b"<testsuites>")?;
-        for (test_name, test_results) in &self.results {
-            out.write(
-                format!(
-                    "<testsuite name=\"{}\" test=\"{}\" failures=\"{}\">",
-                    test_name,
-                    test_results.len(),
-                    -1
-                ).as_bytes(),
-            )?;
-            for result in test_results.iter() {
-                out.write(
-                    format!(
-                        "<testcase name=\"{}\">",
-                        htmlescape::encode_attribute(&result.0)
-                    ).as_bytes(),
-                )?;
-                out.write(format!("<exit-code>{}</exit_code>", result.1.exit_code).as_bytes())?;
-                out.write(
-                    format!(
-                        "<system_out>{}</system_out>",
-                        htmlescape::encode_minimal(&result.1.stdout)
-                    ).as_bytes(),
-                )?;
-                out.write(b"</testcase>")?;
-            }
-            out.write(b"</testuite>")?;
-        }
-        out.write(b"</testsuites>")?;
-        Ok(())
-    }
-}
-
 fn run_xge_async<'a>(
     rx: &std::sync::mpsc::Receiver<(&'a str, &'a TestInput, TestCommand)>,
     tx: &std::sync::mpsc::Sender<(&'a str, &'a TestInput, TestCommandResult)>,
@@ -266,34 +208,29 @@ fn cmd_run(
 ) {
     let tests = create_run_commands(&input_paths, &test_apps, &output_paths);
 
-    let (width, _) = term_size::dimensions().unwrap();
-
     let n_workers = if run_config.parallel {
         num_cpus::get()
     } else {
         1
     };
     let mut pool = Pool::new(n_workers as u32);
-    let (tx, rx) = std::sync::mpsc::channel();
-
     pool.scoped(|scoped| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (xge_tx, xge_rx) = std::sync::mpsc::channel();
         if run_config.xge {
-            let (xge_tx, xge_rx) = std::sync::mpsc::channel();
+            let tx = tx.clone();
             scoped.execute(move || {
                 run_xge_async(&xge_rx, &tx);
             });
-            for (test_name, commands) in &tests {
-                for (input, cmd_creator) in commands {
-                    let cmd = cmd_creator().clone();
+        }
+        for (test_name, commands) in &tests {
+            for (input, cmd_creator) in commands {
+                let cmd = cmd_creator().clone();
+                if run_config.xge {
                     xge_tx
                         .send((test_name, input, cmd))
                         .expect("channel did not accept test input!");
-                }
-            }
-        } else {
-            for (test_name, commands) in &tests {
-                for (input, cmd_creator) in commands {
-                    let cmd = cmd_creator().clone();
+                } else {
                     let tx = tx.clone();
                     scoped.execute(move || {
                         let output = run_command(&cmd);
@@ -304,34 +241,18 @@ fn cmd_run(
             }
         }
 
-        let mut xml_report = XmlReport::create(&output_paths.out_dir.join("results.xml"))
+        let mut xml_report = report::XmlReport::create(&output_paths.out_dir.join("results.xml"))
             .expect("could not create test report!");
+        let stdout_report = report::StdOut {
+            verbose: run_config.verbose,
+        };
 
         let n = tests.values().map(|v| v.len()).sum();
         let mut i = 0;
         for (test_name, input, output) in rx.iter().take(n) {
             i += 1;
             xml_report.add(&test_name, &input.id, &output);
-            if output.exit_code == 0 {
-                if run_config.verbose {
-                    println!(
-                        "[{}/{}] Ok: {} --id \"{}\"\n{}",
-                        i, n, &test_name, &input.id, &output.stdout
-                    );
-                } else {
-                    let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &input.id);
-                    print!("{:width$}", line, width = width);
-                    io::stdout().flush().unwrap();
-                }
-            } else {
-                println!(
-                    "[{}/{}] Failed: {} --id {}\n{}",
-                    i, n, &test_name, &input.id, &output.stdout
-                );
-            }
-        }
-        if !run_config.verbose {
-            println!();
+            stdout_report.add(i, n, &test_name, &input.id, &output);
         }
         xml_report.write().expect("failed to write report!");
     });
