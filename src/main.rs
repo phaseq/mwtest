@@ -136,14 +136,16 @@ fn create_run_commands<'a>(
                         if let Some(rel_path) = &test_input.rel_path {
                             let full_path = input_paths.testcases_dir.join(&rel_path);
                             if cwd.is_none() {
-                                input =
-                                    rel_path.file_name().unwrap().to_string_lossy().into_owned();
+                                cwd =
+                                    Some(full_path.parent().unwrap().to_string_lossy().to_string());
                                 if test_app.config.input_is_dir {
-                                    cwd = Some(full_path.to_string_lossy().to_string());
+                                    input = cwd.clone().unwrap();
                                 } else {
-                                    cwd = Some(
-                                        full_path.parent().unwrap().to_string_lossy().to_string(),
-                                    );
+                                    input = rel_path
+                                        .file_name()
+                                        .unwrap()
+                                        .to_string_lossy()
+                                        .into_owned();
                                 }
                             } else {
                                 input = full_path.to_string_lossy().into_owned();

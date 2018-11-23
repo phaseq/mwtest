@@ -29,7 +29,7 @@
       "--tmp-dir", "{{tmp_path}}",
       "--stand-alone", "1"
     ],
-    "inputs_are_dirs": true
+    "input_is_dir": true
   },
   "cncsim": {
     "command_template": ["{{mwCNCSimTest}}", "{{input_path}}", "-log", "{{tmp_path}}"],

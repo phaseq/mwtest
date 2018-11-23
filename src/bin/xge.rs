@@ -19,7 +19,7 @@ fn accept_commands(stream: TcpStream) {
 
         let mut cmd = Command::new("xgSubmit");
         cmd.current_dir(request.cwd)
-            .arg(format!("/caption={}", request.title));
+            .arg(format!("/caption={}", request.title.replace(' ', "_")));
         if request.local {
             cmd.arg("/allowremote=off");
         }
@@ -30,12 +30,6 @@ fn accept_commands(stream: TcpStream) {
             .args(request.command)
             .spawn()
             .expect("XGE-Launcher: failed to launch process!");
-        /*let result = xge_lib::StreamResult {
-            id: request.id,
-            exit_code: 0,
-            stdout: "did not run".to_string(),
-        };
-        println!("mwt {}", serde_json::to_string(&result).unwrap());*/
     }
 }
 
