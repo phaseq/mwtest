@@ -221,7 +221,7 @@ fn run_xge_async<'a>(
     tx: &std::sync::mpsc::Sender<(&'a str, &'a TestInput, TestCommandResult)>,
 ) {
     let mut xge = xge_lib::XGE::new();
-    let mut issued_commands: Vec<(&str, &TestInput)> = Vec::new();
+    let mut issued_commands: Vec<(&str, &TestInput, Option<String>)> = Vec::new();
     for (test_name, input, cmd) in rx.iter() {
         let request = xge_lib::StreamRequest {
             id: issued_commands.len() as u64,
@@ -230,20 +230,26 @@ fn run_xge_async<'a>(
             command: cmd.command,
             local: false,
         };
-        issued_commands.push((test_name, input));
+        issued_commands.push((test_name, input, cmd.tmp_dir));
         xge.run(&request)
             .expect("error in xge.run(): could not send command");
     }
     xge.done()
         .expect("error in xge.done(): could not close socket");
     for stream_result in xge.results() {
-        let command = issued_commands[stream_result.id as usize];
+        let command = &issued_commands[stream_result.id as usize];
         let result = TestCommandResult {
             exit_code: stream_result.exit_code,
             stdout: stream_result.stdout,
         };
         tx.send((command.0, command.1, result))
             .expect("error in mpsc: could not send result");
+        if let Some(tmp_dir) = &command.2 {
+            if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
+                std::fs::remove_dir(&tmp_dir)
+                    .expect("could not remove test's empty tmp directory!");
+            }
+        }
     }
 }
 
