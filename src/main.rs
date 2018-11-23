@@ -216,26 +216,23 @@ impl XmlReport {
     }
 }
 
-fn run_xge<'a>(
-    tests: &'a HashMap<&'a str, Vec<(TestInput, Box<CommandGenerator>)>>,
+fn run_xge_async<'a>(
+    rx: &std::sync::mpsc::Receiver<(&'a str, &'a TestInput, TestCommand)>,
     tx: &std::sync::mpsc::Sender<(&'a str, &'a TestInput, TestCommandResult)>,
-) -> std::io::Result<()> {
+) {
     let mut xge = xge_lib::XGE::new();
     let mut issued_commands: Vec<(&str, &TestInput)> = Vec::new();
-    for (test_name, commands) in tests {
-        for (input, cmd_creator) in commands {
-            let cmd = cmd_creator();
-            let request = xge_lib::StreamRequest {
-                id: issued_commands.len() as u64,
-                title: input.id.clone(),
-                cwd: cmd.cwd,
-                command: cmd.command,
-                local: false,
-            };
-            issued_commands.push((&test_name, &input));
-            xge.run(&request)
-                .expect("error in xge.run(): could not send command");
-        }
+    for (test_name, input, cmd) in rx.iter() {
+        let request = xge_lib::StreamRequest {
+            id: issued_commands.len() as u64,
+            title: input.id.clone(),
+            cwd: cmd.cwd,
+            command: cmd.command,
+            local: false,
+        };
+        issued_commands.push((test_name, input));
+        xge.run(&request)
+            .expect("error in xge.run(): could not send command");
     }
     xge.done()
         .expect("error in xge.done(): could not close socket");
@@ -248,7 +245,6 @@ fn run_xge<'a>(
         tx.send((command.0, command.1, result))
             .expect("error in mpsc: could not send result");
     }
-    Ok(())
 }
 
 struct RunConfig {
@@ -274,14 +270,21 @@ fn cmd_run(
     let mut pool = Pool::new(n_workers as u32);
     let (tx, rx) = std::sync::mpsc::channel();
 
-    if run_config.xge {
-        let ok = run_xge(&tests, &tx);
-        if !ok.is_ok() {
-            println!("XGE error: {}", ok.err().unwrap());
-            std::process::exit(-1);
-        }
-    } else {
-        pool.scoped(|scoped| {
+    pool.scoped(|scoped| {
+        if run_config.xge {
+            let (xge_tx, xge_rx) = std::sync::mpsc::channel();
+            scoped.execute(move || {
+                run_xge_async(&xge_rx, &tx);
+            });
+            for (test_name, commands) in &tests {
+                for (input, cmd_creator) in commands {
+                    let cmd = cmd_creator().clone();
+                    xge_tx
+                        .send((test_name, input, cmd))
+                        .expect("channel did not accept test input!");
+                }
+            }
+        } else {
             for (test_name, commands) in &tests {
                 for (input, cmd_creator) in commands {
                     let cmd = cmd_creator().clone();
@@ -293,39 +296,39 @@ fn cmd_run(
                     });
                 }
             }
-        });
-    }
+        }
 
-    let mut xml_report = XmlReport::create(&output_paths.out_dir.join("results.xml"))
-        .expect("could not create test report!");
+        let mut xml_report = XmlReport::create(&output_paths.out_dir.join("results.xml"))
+            .expect("could not create test report!");
 
-    let n = tests.values().map(|v| v.len()).sum();
-    let mut i = 0;
-    for (test_name, input, output) in rx.iter().take(n) {
-        i += 1;
-        xml_report.add(&test_name, &input.id, &output);
-        if output.exit_code == 0 {
-            if run_config.verbose {
+        let n = tests.values().map(|v| v.len()).sum();
+        let mut i = 0;
+        for (test_name, input, output) in rx.iter().take(n) {
+            i += 1;
+            xml_report.add(&test_name, &input.id, &output);
+            if output.exit_code == 0 {
+                if run_config.verbose {
+                    println!(
+                        "[{}/{}] Ok: {} --id \"{}\"\n{}",
+                        i, n, &test_name, &input.id, &output.stdout
+                    );
+                } else {
+                    let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &input.id);
+                    print!("{:width$}", line, width = width);
+                    io::stdout().flush().unwrap();
+                }
+            } else {
                 println!(
-                    "[{}/{}] Ok: {} --id \"{}\"\n{}",
+                    "[{}/{}] Failed: {} --id {}\n{}",
                     i, n, &test_name, &input.id, &output.stdout
                 );
-            } else {
-                let line = format!("\r[{}/{}] Ok: {} --id \"{}\"", i, n, &test_name, &input.id);
-                print!("{:width$}", line, width = width);
-                io::stdout().flush().unwrap();
             }
-        } else {
-            println!(
-                "[{}/{}] Failed: {} --id {}\n{}",
-                i, n, &test_name, &input.id, &output.stdout
-            );
         }
-    }
-    if !run_config.verbose {
-        println!();
-    }
-    xml_report.write().expect("failed to write report!");
+        if !run_config.verbose {
+            println!();
+        }
+        xml_report.write().expect("failed to write report!");
+    });
 }
 
 fn populate_test_groups(
@@ -476,9 +479,10 @@ fn main() {
         cmd_list(&test_apps);
     } else if let Some(matches) = matches.subcommand_matches("run") {
         let test_apps = test_apps_from_args(&matches, &test_config, &input_paths, &test_group_file);
+        let out_dir = std::env::current_dir().unwrap();
         let output_paths = OutputPaths {
-            out_dir: PathBuf::from("."),
-            tmp_dir: PathBuf::from("tmp"),
+            out_dir: out_dir.clone(),
+            tmp_dir: out_dir.join("tmp"),
         };
         if Path::exists(&output_paths.tmp_dir) {
             std::fs::remove_dir_all(&output_paths.tmp_dir)
