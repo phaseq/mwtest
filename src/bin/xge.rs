@@ -26,6 +26,7 @@ fn accept_commands(stream: TcpStream) {
         cmd.arg("/command")
             .arg(this_exe)
             .arg("w")
+            .arg(request.id.to_string())
             .args(request.command)
             .spawn()
             .expect("XGE-Launcher: failed to launch process!");

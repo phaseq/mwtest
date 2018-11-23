@@ -2,7 +2,7 @@
 extern crate serde_derive;
 use std::io::{BufRead, Write};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StreamRequest {
     pub id: u64,
     pub title: String,
@@ -11,7 +11,7 @@ pub struct StreamRequest {
     pub local: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StreamResult {
     pub id: u64,
     pub exit_code: i32,
@@ -26,19 +26,26 @@ impl<'a> XGE {
     pub fn new() -> XGE {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let xge_exe = std::path::PathBuf::from(
+        let xge_exe = String::from(
             std::env::current_exe()
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("xge"),
+                .join("xge.exe")
+                .to_str()
+                .unwrap(),
         );
-        let client_process = std::process::Command::new(xge_exe)
+        println!(
+            "{}",
+            format!("/command=\"{} client 127.0.0.1:{}\"", xge_exe, port)
+        );
+        let client_process = std::process::Command::new("powershell.exe")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .arg("client")
-            .arg(format!("127.0.0.1:{}", port))
-            .spawn()
+            .arg(format!(
+                r#"& 'xgConsole' @('/command="{}','client','127.0.0.1:{}"','/openmonitor')"#,
+                xge_exe, port
+            )).spawn()
             .expect("could not spawn XGE client!");
         let client_socket = listener.incoming().next().unwrap();
 
