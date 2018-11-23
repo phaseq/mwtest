@@ -1,6 +1,6 @@
 {
   "verifier": {
-    "command": [
+    "command_template": [
       "{{mwVerifierTest}}",
       "--config", "{{input_path}}",
       "--verifier", "{{mwVerifierDll}}",
@@ -8,30 +8,31 @@
     ]
   },
   "verifierUnit": {
-    "command": [
+    "command_template": [
       "{{mwVerifierUnitTest}}",
       "--gtest_filter", "{{input_path}}"
     ],
     "cwd": "{{mwVerifierUnitTestCWD}}"
   },
   "verifierApi": {
-    "command": [
+    "command_template": [
       "{{mwVerifierApiTest}}",
       "--gtest_filter={{input_path}}"
     ],
     "cwd": "{{mwVerifierApiTestCWD}}"
   },
   "machsim": {
-    "command": [
+    "command_template": [
       "{{machsimtest}}", "newmode",
       "--input-dir", "{{input_path}}",
       "--output-dir", "{{tmp_path}}",
       "--tmp-dir", "{{tmp_path}}",
       "--stand-alone", "1"
-    ]
+    ],
+    "inputs_are_dirs": true
   },
   "cncsim": {
-    "command": ["{{mwCNCSimTest}}", "{{input_path}}", "-log", "{{tmp_path}}"],
+    "command_template": ["{{mwCNCSimTest}}", "{{input_path}}", "-log", "{{tmp_path}}"],
     "cwd": "{{mwCNCSimTestCWD}}"
   }
 }

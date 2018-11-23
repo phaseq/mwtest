@@ -20,8 +20,7 @@
   "machsim": [
     {
       "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
-      "id_pattern": "machsim/MachSimTestCases/(.*)",
-      "matches_parent_dir": true
+      "id_pattern": "machsim/MachSimTestCases/(.*)"
     }
   ],
   "cncsim": [

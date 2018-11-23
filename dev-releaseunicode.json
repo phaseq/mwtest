@@ -1,11 +1,35 @@
 {
-	"{{mwVerifierTest}}": "5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
-	"{{mwVerifierDll}}": "5axis/customer/quickstart/mwVerifier.dll",
-	"{{mwVerifierUnitTest}}": "5axis/customer/quickstart/mwVerifierUnitTest.exe",
-	"{{mwVerifierUnitTestCWD}}": "mwcutsim/mwVerifierUnitTest/RunDir",
-	"{{mwVerifierApiTest}}": "5axis/customer/quickstart/mwVerifierApiTest.exe",
-	"{{mwVerifierApiTestCWD}}": "mwcutsim/mwVerifierApiTest/RunDir",
-	"{{machsimtest}}": "5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe",
-	"{{mwCNCSimTest}}": "CNCSim/mwCNCSimTest/bin/Release/mwCNCSimTest.exe",
-	"{{mwCNCSimTestCWD}}": "5axis/customer/quickstart"
+  "dependencies": {
+    "verifier": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "mwVerifierTest"
+    },
+    "verifierUnit": {
+      "solution": "mwcutsim/mwcutsim_2013.sln",
+      "project": "mwVerifierUnitTest"
+    },
+    "verifierApi": {
+      "solution": "mwcutsim/mwcutsim_2013.sln",
+      "project": "mwVerifierApiTest"
+    },
+    "cncsim": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "mwCNCSimTest"
+    },
+    "machsim": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "machsimtest"
+    }
+  },
+  "exes": {
+    "{{mwVerifierTest}}": "5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
+    "{{mwVerifierDll}}": "5axis/customer/quickstart/mwVerifier.dll",
+    "{{mwVerifierUnitTest}}": "5axis/customer/quickstart/mwVerifierUnitTest.exe",
+    "{{mwVerifierUnitTestCWD}}": "mwcutsim/mwVerifierUnitTest/RunDir",
+    "{{mwVerifierApiTest}}": "5axis/customer/quickstart/mwVerifierApiTest.exe",
+    "{{mwVerifierApiTestCWD}}": "mwcutsim/mwVerifierApiTest/RunDir",
+    "{{machsimtest}}": "5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe",
+    "{{mwCNCSimTest}}": "CNCSim/mwCNCSimTest/bin/Release/mwCNCSimTest.exe",
+    "{{mwCNCSimTestCWD}}": "5axis/customer/quickstart"
+  }
 }

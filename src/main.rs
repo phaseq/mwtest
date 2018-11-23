@@ -12,17 +12,40 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 use clap::{App, Arg, SubCommand};
+use config::CommandTemplate;
 use scoped_threadpool::Pool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
 
+fn cmd_build(test_names: &Vec<&str>, input_paths: &config::InputPaths) {
+    let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
+    for dep in test_names
+        .iter()
+        .map(|n| &input_paths.build_file.dependencies[*n])
+    {
+        let deps = dependencies.entry(&dep.solution).or_insert(vec![]);
+        (*deps).push(&dep.project);
+    }
+    for (solution, projects) in dependencies {
+        Command::new("buildConsole")
+            .arg(solution)
+            .arg("/build")
+            .arg("/cfg=ReleaseUnicode|x64")
+            .arg(format!("/prj={}", projects.join(",")))
+            .arg("/openmonitor")
+            .spawn()
+            .expect("failed to launch buildConsole!")
+            .wait()
+            .expect("failed to build project!");
+    }
+}
+
 #[derive(Debug)]
 struct TestApp {
     name: String,
-    command_template: CommandTemplate,
-    cwd: Option<String>,
+    config: config::TestConfig,
     tests: Vec<PopulatedTestGroup>,
 }
 
@@ -109,14 +132,19 @@ fn create_run_commands<'a>(
                     .flat_map(|(_test_group, inputs)| inputs)
                     .map(|test_input: &TestInput| {
                         let mut input = test_input.id.clone();
-                        let mut cwd = test_app.cwd.clone();
+                        let mut cwd = test_app.config.cwd.clone();
                         if let Some(rel_path) = &test_input.rel_path {
                             let full_path = input_paths.testcases_dir.join(&rel_path);
                             if cwd.is_none() {
                                 input =
                                     rel_path.file_name().unwrap().to_string_lossy().into_owned();
-                                cwd =
-                                    Some(full_path.parent().unwrap().to_string_lossy().to_string());
+                                if test_app.config.input_is_dir {
+                                    cwd = Some(full_path.to_string_lossy().to_string());
+                                } else {
+                                    cwd = Some(
+                                        full_path.parent().unwrap().to_string_lossy().to_string(),
+                                    );
+                                }
                             } else {
                                 input = full_path.to_string_lossy().into_owned();
                             }
@@ -124,7 +152,7 @@ fn create_run_commands<'a>(
                         (
                             test_input.clone(),
                             to_command(
-                                &test_app.command_template,
+                                &test_app.config.command_template,
                                 input,
                                 cwd.expect("no cwd defined!"),
                                 output_paths.tmp_dir.clone(),
@@ -141,21 +169,21 @@ fn to_command(
     tmp_root: PathBuf,
 ) -> Box<CommandGenerator> {
     let command = command_template.apply("{{input_path}}", &input);
-    if command.tokens.iter().any(|t| t == "{{tmp_path}}") {
+    if command.has_pattern("{{tmp_path}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
             let tmp_path = tmp_dir.to_string_lossy().into_owned();
             let command = command.apply("{{tmp_path}}", &tmp_path);
             std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
             TestCommand {
-                command: command.tokens.clone(),
+                command: command.0.clone(),
                 cwd: cwd.to_string(),
                 tmp_dir: Some(tmp_path),
             }
         })
     } else {
         Box::new(move || TestCommand {
-            command: command.tokens.clone(),
+            command: command.0.clone(),
             cwd: cwd.to_string(),
             tmp_dir: None,
         })
@@ -271,6 +299,7 @@ fn cmd_run(
 }
 
 fn populate_test_groups(
+    test_config: &config::TestConfig,
     input_paths: &config::InputPaths,
     test_groups: &Vec<config::TestGroup>,
     id_filter: &Fn(&str) -> bool,
@@ -281,7 +310,7 @@ fn populate_test_groups(
             (
                 test_group.clone(),
                 test_group
-                    .generate_test_inputs(&input_paths)
+                    .generate_test_inputs(&test_config, &input_paths)
                     .into_iter()
                     .filter(|f| id_filter(&f.id))
                     .collect(),
@@ -289,37 +318,8 @@ fn populate_test_groups(
         }).collect()
 }
 
-#[derive(Debug)]
-struct CommandTemplate {
-    tokens: Vec<String>,
-}
-impl CommandTemplate {
-    fn apply(&self, from: &str, to: &str) -> CommandTemplate {
-        CommandTemplate {
-            tokens: self
-                .tokens
-                .iter()
-                .map(|t| t.to_owned().replace(from, to))
-                .collect(),
-        }
-    }
-    fn apply_all(&self, patterns: &HashMap<String, String>) -> CommandTemplate {
-        CommandTemplate {
-            tokens: self
-                .tokens
-                .iter()
-                .map(|t: &String| {
-                    patterns
-                        .iter()
-                        .fold(t.to_owned(), |acc, (k, v)| acc.replace(k, v))
-                }).collect(),
-        }
-    }
-}
-
 fn test_apps_from_args(
     args: &clap::ArgMatches,
-    test_config: &config::TestConfigFile,
     input_paths: &config::InputPaths,
     test_group_file: &config::TestGroupFile,
 ) -> Vec<TestApp> {
@@ -334,28 +334,24 @@ fn test_apps_from_args(
     args.values_of("test_app")
         .unwrap()
         .map(|test_name| {
-            let config = test_config.get(test_name);
+            let config = input_paths.test_config.get(test_name);
             if config.is_none() {
-                let test_names: Vec<&String> = test_config.keys().collect();
+                let test_names: Vec<&String> = input_paths.test_config.keys().collect();
                 println!(
                     "\"{}\" not found: must be one of {:?}",
                     test_name, test_names
                 );
                 std::process::exit(-1);
             }
-            let command_template = CommandTemplate {
-                tokens: config.unwrap().command.clone(),
-            }.apply_all(&input_paths.exe_paths);
             TestApp {
                 name: test_name.to_string(),
-                command_template: command_template,
-                cwd: config
-                    .unwrap()
-                    .cwd
-                    .as_ref()
-                    .map(|c| input_paths.exe_paths[c].clone())
-                    .clone(),
-                tests: populate_test_groups(input_paths, &test_group_file[test_name], &id_filter),
+                config: config.unwrap().clone(),
+                tests: populate_test_groups(
+                    config.unwrap(),
+                    input_paths,
+                    &test_group_file[test_name],
+                    &id_filter,
+                ),
             }
         }).collect()
 }
@@ -378,6 +374,9 @@ fn main() {
             .takes_value(true)
             .help("usually \"your-branch/testcases\""))
         .subcommand(
+            SubCommand::with_name("build")
+                .arg(test_app_arg.clone()),
+        ).subcommand(
             SubCommand::with_name("list")
                 .arg(test_app_arg.clone())
                 .arg(filter_arg.clone()),
@@ -400,28 +399,35 @@ fn main() {
                     .default_value("1")),
         ).get_matches();
 
+    let input_paths = config::InputPaths::from(
+        &matches.value_of("build-dir"),
+        &matches.value_of("testcases-dir"),
+        &Some("dev-releaseunicode.json"),
+        &Some("tests.json"),
+    );
+
+    if let Some(matches) = matches.subcommand_matches("build") {
+        cmd_build(
+            &matches.values_of("test_app").unwrap().collect(),
+            &input_paths,
+        );
+        std::process::exit(0);
+    }
+
     let root_dir = std::env::current_exe()
         .unwrap()
         .parent()
         .unwrap()
         .join("../../");
-    let test_config =
-        config::read_test_config_file(&root_dir.join("tests.json").to_string_lossy()).unwrap();
-
-    let input_paths = config::InputPaths::from(
-        &matches.value_of("build-dir"),
-        &root_dir.join("dev-releaseunicode.json").to_string_lossy(),
-        &matches.value_of("testcases-dir"),
-    );
 
     let test_group_file =
         config::read_test_group_file(&root_dir.join("ci.json").to_string_lossy()).unwrap();
 
     if let Some(matches) = matches.subcommand_matches("list") {
-        let test_apps = test_apps_from_args(&matches, &test_config, &input_paths, &test_group_file);
+        let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
         cmd_list(&test_apps);
     } else if let Some(matches) = matches.subcommand_matches("run") {
-        let test_apps = test_apps_from_args(&matches, &test_config, &input_paths, &test_group_file);
+        let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
         let out_dir = std::env::current_dir().unwrap();
         let output_paths = OutputPaths {
             out_dir: out_dir.clone(),
