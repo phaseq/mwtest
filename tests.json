@@ -8,17 +8,11 @@
     ]
   },
   "verifierUnit": {
-    "command_template": [
-      "{{mwVerifierUnitTest}}",
-      "--gtest_filter", "{{input_path}}"
-    ],
+    "command_template": ["{{mwVerifierUnitTest}}", "--gtest_filter={{input_path}}"],
     "cwd": "{{mwVerifierUnitTestCWD}}"
   },
   "verifierApi": {
-    "command_template": [
-      "{{mwVerifierApiTest}}",
-      "--gtest_filter={{input_path}}"
-    ],
+    "command_template": ["{{mwVerifierApiTest}}", "--gtest_filter={{input_path}}"],
     "cwd": "{{mwVerifierApiTestCWD}}"
   },
   "machsim": {

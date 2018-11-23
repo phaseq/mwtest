@@ -136,7 +136,6 @@ impl TestGroup {
             .exes
             .get(filter[0].as_str())
             .expect("could not find find_gtest executable!");
-        println!("{:?}", cmd);
         let output = std::process::Command::new(cmd)
             .args(filter[1..].iter())
             .output()
