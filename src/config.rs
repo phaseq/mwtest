@@ -6,25 +6,25 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct TestConfig {
+pub struct AppConfig {
     pub command_template: CommandTemplate,
     pub cwd: Option<String>,
     #[serde(default)]
     pub input_is_dir: bool,
 }
-impl TestConfig {
+impl AppConfig {
     fn apply_patterns(&mut self, patterns: &HashMap<String, String>) {
         self.command_template = self.command_template.apply_all(patterns);
         self.cwd = self.cwd.clone().map(|d| patterns[&d].clone());
     }
 }
-pub type TestConfigFile = HashMap<String, TestConfig>;
-fn read_test_config_file(
+pub type AppConfigFile = HashMap<String, AppConfig>;
+fn read_app_config_file(
     path: &Path,
-    build_file: &BuildFile,
-) -> Result<TestConfigFile, Box<std::error::Error>> {
+    build_file: &BuildLayoutFile,
+) -> Result<AppConfigFile, Box<std::error::Error>> {
     let file = File::open(path)?;
-    let mut content: TestConfigFile = serde_json::from_reader(file)?;
+    let mut content: AppConfigFile = serde_json::from_reader(file)?;
     for test in content.values_mut() {
         (*test).apply_patterns(&build_file.exes);
     }
@@ -32,14 +32,14 @@ fn read_test_config_file(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct BuildFile {
+pub struct BuildLayoutFile {
     pub dependencies: HashMap<String, BuildDependency>,
     pub exes: HashMap<String, String>,
 }
-impl BuildFile {
-    pub fn from(path: &Path, build_dir: &Path) -> Result<BuildFile, Box<std::error::Error>> {
+impl BuildLayoutFile {
+    pub fn from(path: &Path, build_dir: &Path) -> Result<BuildLayoutFile, Box<std::error::Error>> {
         let file = File::open(path)?;
-        let mut content: BuildFile = serde_json::from_reader(file)?;
+        let mut content: BuildLayoutFile = serde_json::from_reader(file)?;
         for v in content.dependencies.values_mut() {
             *v = BuildDependency {
                 solution: build_dir
@@ -76,7 +76,7 @@ pub struct TestGroup {
 impl TestGroup {
     pub fn generate_test_inputs(
         &self,
-        test_config: &TestConfig,
+        test_config: &AppConfig,
         input_paths: &InputPaths,
     ) -> Vec<::TestId> {
         if self.find_glob.is_some() {
@@ -89,7 +89,7 @@ impl TestGroup {
     }
     fn generate_path_inputs(
         &self,
-        test_config: &TestConfig,
+        test_config: &AppConfig,
         input_paths: &InputPaths,
     ) -> Vec<::TestId> {
         let re = regex::Regex::new(&self.id_pattern).unwrap();
@@ -102,7 +102,7 @@ impl TestGroup {
             .expect("failed to read glob pattern!")
             .map(|p| p.unwrap())
             .map(|p| {
-                if !test_config.input_is_dir {
+                if test_config.input_is_dir {
                     PathBuf::from(p.parent().unwrap())
                 } else {
                     p
@@ -117,11 +117,15 @@ impl TestGroup {
                     .to_string()
                     .replace('\\', "/")
             }).map(|rel_path: String| {
-                let id = re
-                    .captures(&rel_path)
-                    .expect("pattern did not match on one of the tests!")
-                    .get(1)
-                    .map_or("", |m| m.as_str());
+                let capture = re.captures(&rel_path);
+                if capture.is_none() {
+                    println!(
+                        "pattern did not match on one of the tests!\n pattern: {}\n test: {}",
+                        &self.id_pattern, &rel_path
+                    );
+                    std::process::exit(-1);
+                }
+                let id = capture.unwrap().get(1).map_or("", |m| m.as_str());
 
                 ::TestId {
                     id: id.to_string(),
@@ -164,7 +168,7 @@ impl TestGroup {
 }
 
 pub type TestGroupFile = HashMap<String, Vec<TestGroup>>;
-pub fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error::Error>> {
+pub fn read_test_group_file(path: &Path) -> Result<TestGroupFile, Box<std::error::Error>> {
     let file = File::open(path)?;
     let content = serde_json::from_reader(file)?;
     Ok(content)
@@ -172,16 +176,32 @@ pub fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error:
 
 #[derive(Debug)]
 pub struct InputPaths {
-    pub test_config: TestConfigFile,
-    pub build_file: BuildFile,
+    pub app_config: AppConfigFile,
+    pub build_file: BuildLayoutFile,
+    pub preset_path: PathBuf,
     pub testcases_root: PathBuf,
 }
 impl InputPaths {
+    fn get_root_path() -> PathBuf {
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("../../")
+    }
+
+    pub fn get_registered_tests() -> Vec<String> {
+        let path = InputPaths::get_root_path().join("tests.json");
+        let file = File::open(path).unwrap();
+        let content: AppConfigFile = serde_json::from_reader(file).unwrap();
+        content.keys().cloned().collect()
+    }
+
     pub fn from(
         given_build_dir: &Option<&str>,
         given_testcases_root: &Option<&str>,
-        given_build_file_path: &Option<&str>,
-        given_test_config_path: &Option<&str>,
+        build_layout: &str,
+        preset: &str,
     ) -> InputPaths {
         let maybe_build_dir = given_build_dir
             .map_or_else(|| InputPaths::guess_build_dir(), |d| Some(PathBuf::from(d)));
@@ -200,21 +220,43 @@ impl InputPaths {
         let build_dir = maybe_build_dir.unwrap();
         let testcases_root = maybe_testcases_root.unwrap();
 
-        let root_dir = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("../../");
+        let root_dir = InputPaths::get_root_path();
 
-        let build_file_path = root_dir.join(given_build_file_path.unwrap());
-        let build_file = BuildFile::from(&build_file_path, &build_dir).unwrap();
+        let mut build_layout_path = root_dir.join(build_layout.to_owned() + ".json");
+        if !build_layout_path.exists() {
+            build_layout_path = PathBuf::from(build_layout);
+            if !build_layout_path.exists() {
+                println!("could not determine build layout! Please make sure that the path given via --build exists!");
+                std::process::exit(-1);
+            }
+        }
+        let mut preset_path = root_dir.join(preset.to_owned() + ".json");
+        if !preset_path.exists() {
+            preset_path = PathBuf::from(preset);
+            if !preset_path.exists() {
+                println!("could not determine build layout! Please make sure that the path given via --build exists!");
+                std::process::exit(-1);
+            }
+        }
 
-        let test_config_path = root_dir.join(given_test_config_path.unwrap());
-        let test_config = read_test_config_file(&test_config_path, &build_file).unwrap();
+        let build_layout_file = BuildLayoutFile::from(&build_layout_path, &build_dir);
+        if build_layout_file.is_err() {
+            println!(
+                "failed to load build file {:?}:\n{:?}",
+                build_layout_path,
+                build_layout_file.unwrap_err()
+            );
+            std::process::exit(-1);
+        }
+        let build_file = build_layout_file.unwrap();
+
+        let app_config_path = root_dir.join("tests.json");
+        let app_config = read_app_config_file(&app_config_path, &build_file).unwrap();
 
         InputPaths {
-            test_config: test_config,
+            app_config: app_config,
             build_file: build_file,
+            preset_path: preset_path,
             testcases_root: PathBuf::from(testcases_root),
         }
     }

@@ -23,7 +23,12 @@ use uuid::Uuid;
 static GLOBAL: std::alloc::System = std::alloc::System;
 
 fn main() {
-    let test_app_arg = Arg::with_name("test_app").required(true).multiple(true);
+    let registered_tests = config::InputPaths::get_registered_tests();
+    let registered_tests_str: Vec<&str> = registered_tests.iter().map(|s| s.as_str()).collect();
+    let test_app_arg = Arg::with_name("test_app")
+        .required(true)
+        .multiple(true)
+        .possible_values(&registered_tests_str[..]);
     let filter_arg = Arg::with_name("filter")
         .short("f")
         .long("filter")
@@ -31,14 +36,23 @@ fn main() {
         .help("select ids that contain one of the given substrings")
         .multiple(true);
     let matches = App::new("MW Test")
-        .arg(Arg::with_name("build-dir")
+        .arg(Arg::with_name("BUILD_ROOT")
             .long("build-dir")
             .takes_value(true)
             .help("depends on build type, could be \"your-branch/dev\", a quickstart or a CMake build directory"))
-        .arg(Arg::with_name("testcases-dir")
+        .arg(Arg::with_name("TESTCASES_ROOT")
             .long("testcases-dir")
             .takes_value(true)
             .help("usually \"your-branch/testcases\""))
+        .arg(Arg::with_name("BUILD_LAYOUT")
+            .short("b")
+            .long("--build")
+            .default_value("dev-releaseunicode")
+            .help("specifies the layout of your build (like dev-releaseunicode, quickstart or cmake)"))
+        .arg(Arg::with_name("PRESET")
+            .long("--preset")
+            .default_value("ci")
+            .help("specifies which tests to run (like ci, nightly)"))
         .subcommand(
             SubCommand::with_name("build")
                 .arg(test_app_arg.clone()),
@@ -68,10 +82,10 @@ fn main() {
         ).get_matches();
 
     let input_paths = config::InputPaths::from(
-        &matches.value_of("build-dir"),
-        &matches.value_of("testcases-dir"),
-        &Some("dev-releaseunicode.json"),
-        &Some("tests.json"),
+        &matches.value_of("BUILD_ROOT"),
+        &matches.value_of("TESTCASES_ROOT"),
+        &matches.value_of("BUILD_LAYOUT").unwrap(),
+        &matches.value_of("PRESET").unwrap(),
     );
 
     if let Some(matches) = matches.subcommand_matches("build") {
@@ -82,14 +96,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    let root_dir = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("../../");
-
-    let test_group_file =
-        config::read_test_group_file(&root_dir.join("ci.json").to_string_lossy()).unwrap();
+    let test_group_file = config::read_test_group_file(&input_paths.preset_path).unwrap();
 
     if let Some(matches) = matches.subcommand_matches("list") {
         let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
@@ -226,7 +233,7 @@ struct RunConfig {
 #[derive(Debug)]
 struct AppWithTests {
     name: String,
-    config: config::TestConfig,
+    config: config::AppConfig,
     tests: Vec<GroupWithTests>,
 }
 
@@ -292,7 +299,7 @@ fn create_run_commands<'a>(
 fn test_id_to_input(
     test_id: &TestId,
     input_paths: &config::InputPaths,
-    app_config: &config::TestConfig,
+    app_config: &config::AppConfig,
 ) -> (String, String) {
     if let Some(rel_path) = &test_id.rel_path {
         let full_path = input_paths.testcases_root.join(&rel_path);
@@ -300,13 +307,13 @@ fn test_id_to_input(
             // cncsim case
             (full_path.to_string_lossy().into_owned(), cwd.clone())
         } else {
-            let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
             if app_config.input_is_dir {
                 // machsim case
-                (parent_dir.clone(), parent_dir)
+                (".".to_string(), full_path.to_string_lossy().into_owned())
             } else {
                 // verifier case
                 let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
+                let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
                 (file_name, parent_dir)
             }
         }
@@ -386,8 +393,9 @@ impl<'a> TestInstance<'a> {
             .output();
         if maybe_output.is_err() {
             println!(
-                "failed to run test command \"{:?}\": {}\nDid you forget to build?",
+                "failed to run test command!\n  command: {:?}\n  cwd: {}  \n  error: {}\n\nDid you forget to build?",
                 &self.command.command,
+                &self.command.cwd,
                 maybe_output.err().unwrap()
             );
             std::process::exit(-1);
@@ -466,23 +474,23 @@ fn test_apps_from_args(
     };
     args.values_of("test_app")
         .unwrap()
-        .map(|test_name| {
-            let config = input_paths.test_config.get(test_name);
+        .map(|app_name| {
+            let config = input_paths.app_config.get(app_name);
             if config.is_none() {
-                let test_names: Vec<&String> = input_paths.test_config.keys().collect();
+                let test_names: Vec<&String> = input_paths.app_config.keys().collect();
                 println!(
                     "\"{}\" not found: must be one of {:?}",
-                    test_name, test_names
+                    app_name, test_names
                 );
                 std::process::exit(-1);
             }
             AppWithTests {
-                name: test_name.to_string(),
+                name: app_name.to_string(),
                 config: config.unwrap().clone(),
                 tests: populate_test_groups(
                     config.unwrap(),
                     input_paths,
-                    &test_group_file[test_name],
+                    &test_group_file[app_name],
                     &id_filter,
                 ),
             }
@@ -490,7 +498,7 @@ fn test_apps_from_args(
 }
 
 fn populate_test_groups(
-    test_config: &config::TestConfig,
+    test_config: &config::AppConfig,
     input_paths: &config::InputPaths,
     test_groups: &Vec<config::TestGroup>,
     id_filter: &Fn(&str) -> bool,
