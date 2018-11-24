@@ -311,6 +311,6 @@ impl CommandTemplate {
         )
     }
     pub fn has_pattern(&self, pattern: &str) -> bool {
-        self.0.iter().any(|t| t == pattern)
+        self.0.iter().any(|t| t.contains(pattern))
     }
 }

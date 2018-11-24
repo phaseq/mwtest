@@ -220,8 +220,9 @@ fn cmd_run(
 
         let mut txt_report = report::FileLogger::create(&output_paths.out_dir);
         let xml_location = &output_paths.out_dir.join("results.xml");
-        let mut xml_report = report::XmlReport::create(xml_location, input_paths.testcases_root.to_str().unwrap())
-            .expect("could not create test report!");
+        let mut xml_report =
+            report::XmlReport::create(xml_location, input_paths.testcases_root.to_str().unwrap())
+                .expect("could not create test report!");
 
         let n = tests.len() * run_config.repeat;
         let stdout_report = report::StdOut {
@@ -341,9 +342,15 @@ struct OutputPaths {
 pub struct TestCommand {
     command: Vec<String>,
     cwd: String,
-    pub tmp_dir: Option<String>,
+    pub tmp_path: TmpPath,
 }
 type CommandGenerator = Fn() -> TestCommand;
+#[derive(Debug, Clone)]
+pub enum TmpPath {
+    None,
+    File(String),
+    Dir(String),
+}
 
 #[derive(Debug, Clone)]
 pub struct TestCommandResult {
@@ -412,7 +419,7 @@ fn test_command_generator(
     cwd: String,
     tmp_root: PathBuf,
 ) -> Box<CommandGenerator> {
-    let command = command_template.apply("{{input_path}}", &input);
+    let command = command_template.apply("{{input}}", &input);
     if command.has_pattern("{{tmp_path}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
@@ -422,14 +429,25 @@ fn test_command_generator(
             TestCommand {
                 command: command.0.clone(),
                 cwd: cwd.to_string(),
-                tmp_dir: Some(tmp_path),
+                tmp_path: TmpPath::File(tmp_path),
+            }
+        })
+    } else if command.has_pattern("{{tmp_file}}") {
+        Box::new(move || {
+            let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
+            let tmp_path = tmp_dir.to_string_lossy().into_owned();
+            let command = command.apply("{{tmp_file}}", &tmp_path);
+            TestCommand {
+                command: command.0.clone(),
+                cwd: cwd.to_string(),
+                tmp_path: TmpPath::File(tmp_path),
             }
         })
     } else {
         Box::new(move || TestCommand {
             command: command.0.clone(),
             cwd: cwd.to_string(),
-            tmp_dir: None,
+            tmp_path: TmpPath::None,
         })
     }
 }
@@ -525,7 +543,7 @@ impl<'a> TestInstance<'a> {
                 std::fs::remove_dir(&tmp_dir)?;
             }
         }*/
-        if let Some(tmp_path) = &self.command.tmp_dir {
+        if let TmpPath::Dir(tmp_path) = &self.command.tmp_path {
             if std::fs::read_dir(tmp_path).unwrap().next().is_none() {
                 std::fs::remove_dir(&tmp_path)?;
             }

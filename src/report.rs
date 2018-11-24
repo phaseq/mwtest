@@ -30,7 +30,7 @@ impl<'a> XmlReport<'a> {
     }
     pub fn write(&mut self) -> std::io::Result<()> {
         let mut out = BufWriter::new(&self.file);
-        out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
+        out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><mwtest>")?;
         out.write(
             format!(
                 "<config><reference_root>{}</reference_root></config>",
@@ -46,28 +46,37 @@ impl<'a> XmlReport<'a> {
                     test_results.len()
                 ).as_bytes(),
             )?;
-            for result in test_results.iter() {
+            for (test_instance, command_result) in test_results.iter() {
                 out.write(
                     format!(
                         "<testcase name=\"{}\">",
-                        htmlescape::encode_attribute(&result.0.test_id.id)
+                        htmlescape::encode_attribute(&test_instance.test_id.id)
                     ).as_bytes(),
                 )?;
-                out.write(format!("<exit-code>{}</exit_code>", result.1.exit_code).as_bytes())?;
+                out.write(format!("<exit_code>{}</exit_code>", command_result.exit_code).as_bytes())?;
+                if command_result.exit_code != 0 {
+                    out.write(b"<failure />")?;
+                }
                 out.write(
                     format!(
                         "<system_out>{}</system_out>",
-                        htmlescape::encode_minimal(&result.1.stdout)
+                        htmlescape::encode_minimal(&command_result.stdout)
                     ).as_bytes(),
                 )?;
-                if let Some(tmp_dir) = &result.0.command.tmp_dir {
+                if let ::TmpPath::None = &test_instance.command.tmp_path {
+                } else {
+                    let tmp_dir = match &test_instance.command.tmp_path {
+                        ::TmpPath::File(tmp_dir) => tmp_dir,
+                        ::TmpPath::Dir(tmp_dir) => tmp_dir,
+                        _ => panic!(),
+                    };
                     if PathBuf::from(tmp_dir).exists() {
                         let rel_tmp_dir = PathBuf::from(tmp_dir);
                         let rel_tmp_dir = rel_tmp_dir
                             .strip_prefix(self.file_path.parent().unwrap())
                             .unwrap();
                         let rel_tmp_dir = rel_tmp_dir.to_string_lossy().into_owned();
-                        let rel_reference_path = match &result.0.test_id.rel_path {
+                        let rel_reference_path = match &test_instance.test_id.rel_path {
                             ::RelTestLocation::Dir(p) => p,
                             ::RelTestLocation::File(p) => p,
                             _ => panic!(""),
@@ -84,9 +93,9 @@ impl<'a> XmlReport<'a> {
                 }
                 out.write(b"</testcase>")?;
             }
-            out.write(b"</testuite>")?;
+            out.write(b"</testsuite>")?;
         }
-        out.write(b"</testsuites>")?;
+        out.write(b"</testsuites></mwtest>")?;
         Ok(())
     }
 }

@@ -2,31 +2,61 @@
   "verifier": {
     "command_template": [
       "{{mwVerifierTest}}",
-      "--config", "{{input_path}}",
-      "--verifier", "{{mwVerifierDll}}",
-      "--out-dir", "{{tmp_path}}"
+      "--config",
+      "{{input}}",
+      "--verifier",
+      "{{mwVerifierDll}}",
+      "--out-dir",
+      "{{tmp_path}}"
     ]
   },
   "verifierUnit": {
-    "command_template": ["{{mwVerifierUnitTest}}", "--gtest_filter={{input_path}}"],
+    "command_template": [
+      "{{mwVerifierUnitTest}}",
+      "--gtest_filter={{input}}"
+    ],
     "cwd": "{{mwVerifierUnitTestCWD}}"
   },
   "verifierApi": {
-    "command_template": ["{{mwVerifierApiTest}}", "--gtest_filter={{input_path}}"],
+    "command_template": [
+      "{{mwVerifierApiTest}}",
+      "--gtest_filter={{input}}"
+    ],
     "cwd": "{{mwVerifierApiTestCWD}}"
   },
   "machsim": {
     "command_template": [
-      "{{machsimtest}}", "newmode",
-      "--input-dir", "{{input_path}}",
-      "--output-dir", "{{tmp_path}}",
-      "--tmp-dir", "{{tmp_path}}",
-      "--stand-alone", "1"
+      "{{machsimtest}}",
+      "newmode",
+      "--input-dir",
+      "{{input}}",
+      "--output-dir",
+      "{{tmp_path}}",
+      "--tmp-dir",
+      "{{tmp_path}}",
+      "--stand-alone",
+      "1"
     ],
     "input_is_dir": true
   },
   "cncsim": {
-    "command_template": ["{{mwCNCSimTest}}", "{{input_path}}", "-log", "{{tmp_path}}"],
+    "command_template": [
+      "{{mwCNCSimTest}}",
+      "{{input}}",
+      "-log",
+      "{{tmp_path}}"
+    ],
     "cwd": "{{mwCNCSimTestCWD}}"
+  },
+  "eo": {
+    "command_template": [
+      "{{exactoutput}}",
+      "-binFile:{{input}}",
+      "-outFile:{{tmp_file}}",
+      "-onScreen:0",
+      "-timeout:0",
+      "-memoryLimit:4096",
+      "-iAmDebugging:1"
+    ]
   }
 }

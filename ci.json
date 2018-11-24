@@ -36,5 +36,11 @@
       "find_glob": "cncsim/CNCSimReferenceFiles/**/*.cnclog",
       "id_pattern": "cncsim/CNCSimReferenceFiles/(.*)"
     }
+  ],
+  "eo": [
+    {
+      "find_glob": "5axis/binfiles/**/*.bin",
+      "id_pattern": "5axis/binfiles/(.*).bin"
+    }
   ]
 }

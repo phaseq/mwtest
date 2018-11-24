@@ -19,6 +19,10 @@
     "machsim": {
       "solution": "5axis/build_all_VS2013.sln",
       "project": "machsimtest"
+    },
+    "eo": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "exactoutputBT"
     }
   },
   "exes": {
@@ -30,6 +34,8 @@
     "{{mwVerifierApiTestCWD}}": "mwcutsim/mwVerifierApiTest/RunDir",
     "{{machsimtest}}": "5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe",
     "{{mwCNCSimTest}}": "CNCSim/mwCNCSimTest/bin/Release/mwCNCSimTest.exe",
-    "{{mwCNCSimTestCWD}}": "5axis/customer/quickstart"
+    "{{mwCNCSimTestCWD}}": "5axis/customer/quickstart",
+    "{{exactoutput}}": "5axis/test/exactoutputBT/ReleaseUnicode/exactoutputBT.exe",
+    "{{exactoutputCWD}}": "5axis/customer/quickstart"
   }
 }
