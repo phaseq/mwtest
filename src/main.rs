@@ -45,6 +45,9 @@ fn main() {
             .long("testcases-dir")
             .takes_value(true)
             .help("usually \"your-branch/testcases\""))
+        .arg(Arg::with_name("OUT_DIR")
+            .long("output-dir")
+            .takes_value(true))
         .arg(Arg::with_name("BUILD_LAYOUT")
             .short("b")
             .long("--build")
@@ -104,16 +107,28 @@ fn main() {
         cmd_list(&test_apps);
     } else if let Some(matches) = matches.subcommand_matches("run") {
         let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
-        let out_dir = std::env::current_dir().unwrap();
+        let out_dir = matches
+            .value_of("OUT_DIR")
+            .map(|v| PathBuf::from(v))
+            .unwrap_or_else(|| std::env::current_dir().unwrap().join("test_output"));
         let output_paths = OutputPaths {
             out_dir: out_dir.clone(),
             tmp_dir: out_dir.join("tmp"),
         };
-        if Path::exists(&output_paths.tmp_dir) {
-            std::fs::remove_dir_all(&output_paths.tmp_dir)
+        if Path::exists(&output_paths.out_dir) {
+            if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
+                println!(
+                    "ERROR: can't reset the output directory: {:?}\n. It doesn't look like it \
+                     was created by mwtest. Please select another one or delete it manually.",
+                    &output_paths.out_dir
+                );
+                std::process::exit(-1);
+            }
+            std::fs::remove_dir_all(&output_paths.out_dir)
                 .expect("could not clean up tmp directory!");
         }
-        std::fs::create_dir(&output_paths.tmp_dir).expect("could not create tmp directory!");
+        std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
+        println!("Test artifacts will be written to {:?}.", &output_paths.out_dir);
         let run_config = RunConfig {
             verbose: matches.is_present("verbose"),
             parallel: matches.is_present("threadpool"),
@@ -179,7 +194,7 @@ fn cmd_run(
         let (tx, rx) = mpsc::channel();
         let (xge_tx, xge_rx) = mpsc::channel::<TestInstance>();
         if run_config.xge {
-            launch_xge_management_threads(scoped, xge_rx, &tx);
+            launch_xge_management_threads(scoped, xge_rx, &tx, &output_paths);
         }
         for test_template in &tests {
             for _ in 0..run_config.repeat {
@@ -191,7 +206,7 @@ fn cmd_run(
                 } else {
                     let tx = tx.clone();
                     scoped.execute(move || {
-                        let output = test_instance.run();
+                        let output = test_instance.run(&output_paths);
                         tx.send((test_instance.app_name, test_instance.test_id, output))
                             .expect("channel did not accept test result!");
                     });
@@ -226,6 +241,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
     scoped: &scoped_threadpool::Scope<'pool, 'scope>,
     xge_rx: mpsc::Receiver<TestInstance<'scope>>,
     tx: &mpsc::Sender<ResultMessage<'scope>>,
+    output_paths: &'scope OutputPaths,
 ) {
     let tx = tx.clone();
     let (mut xge_writer, mut xge_reader) = xge_lib::xge();
@@ -271,7 +287,9 @@ fn launch_xge_management_threads<'pool, 'scope>(
             tx.send(message)
                 .expect("error in mpsc: could not send result");
             let test_instance = &command.2;
-            test_instance.cleanup();
+            test_instance
+                .cleanup(&output_paths)
+                .expect("failed to clean up temporary output directory!");
         }
     });
 }
@@ -428,7 +446,7 @@ struct TestInstance<'a> {
     command: TestCommand,
 }
 impl<'a> TestInstance<'a> {
-    fn run(&self) -> TestCommandResult {
+    fn run(&self, output_paths: &OutputPaths) -> TestCommandResult {
         let maybe_output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
@@ -447,20 +465,32 @@ impl<'a> TestInstance<'a> {
         let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
         let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
         let output_str = stderr.to_owned() + stdout;
-        self.cleanup();
+        self.cleanup(&output_paths)
+            .expect("failed to clean up temporary output directory!");
         TestCommandResult {
             exit_code: exit_code,
             stdout: output_str,
         }
     }
 
-    fn cleanup(&self) {
+    fn cleanup(&self, output_paths: &OutputPaths) -> std::io::Result<()> {
         if let Some(tmp_dir) = &self.command.tmp_dir {
-            if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
-                std::fs::remove_dir(&tmp_dir)
-                    .expect("could not remove test's empty tmp directory!");
+            for entry in std::fs::read_dir(&tmp_dir)? {
+                let entry = entry?;
+                let new_name = output_paths
+                    .out_dir
+                    .clone()
+                    .join(self.test_id.rel_path.clone().unwrap());
+                {
+                    let parent_dir = new_name.parent();
+                    println!("writing {:?} to {:?}", entry, new_name);
+                    std::fs::create_dir_all(parent_dir.unwrap())?;
+                }
+                std::fs::rename(entry.path(), new_name)?;
             }
+            std::fs::remove_dir(&tmp_dir)?;
         }
+        Ok(())
     }
 }
 
