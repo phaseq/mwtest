@@ -1,0 +1,54 @@
+{
+  "verifier": [
+    {
+      "find_glob": "cutsim/_servertest/verifier/smoke/**/*.verytest.ini",
+      "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini"
+    },
+    {
+      "find_glob": "cutsim/_servertest/verifier/nightly/**/*.verytest.ini",
+      "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini"
+    }
+  ],
+  "verifierUnit": [
+    {
+      "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*-*RunLocal*"],
+      "id_pattern": "(.*)"
+    }
+  ],
+  "verifierApi": [
+    {
+      "find_gtest": ["{{mwVerifierApiTest}}", "--gtest_list_tests", "--gtest_filter=*-*RunLocal*"],
+      "id_pattern": "(.*)"
+    }
+  ],
+  "machsim": [
+    {
+      "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
+      "id_pattern": "machsim/MachSimTestCases/(.*)"
+    },
+    {
+      "find_glob": "machsim/MachSimTestCases/LargeInputPools/**/report.xml",
+      "id_pattern": "machsim/MachSimTestCases/(.*)"
+    }
+  ],
+  "cncsim": [
+    {
+      "find_glob": "cncsim/ReferenceFiles/GeneratedCNCFiles/**/*.cnclog",
+      "id_pattern": "cncsim/ReferenceFiles/(.*)"
+    },
+    {
+      "find_glob": "cncsim/TestCases/**/*.cnclog",
+      "id_pattern": "cncsim/TestCases/(.*)"
+    },
+    {
+      "find_glob": "cncsim/CNCSimReferenceFiles/**/*.cnclog",
+      "id_pattern": "cncsim/CNCSimReferenceFiles/(.*)"
+    }
+  ],
+  "eo": [
+    {
+      "find_glob": "5axis/binfiles/**/*.bin",
+      "id_pattern": "5axis/binfiles/(.*).bin"
+    }
+  ]
+}

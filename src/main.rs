@@ -565,7 +565,7 @@ fn test_apps_from_args(
             true
         }
     };
-    args.values_of("test_app")
+    let apps: Vec<AppWithTests> = args.values_of("test_app")
         .unwrap()
         .map(|app_name| {
             let config = input_paths.app_config.get(app_name);
@@ -577,17 +577,23 @@ fn test_apps_from_args(
                 );
                 std::process::exit(-1);
             }
+            let empty_vec = vec![];
+            let test_groups = test_group_file.get(app_name).unwrap_or(&empty_vec);
             AppWithTests {
                 name: app_name.to_string(),
                 config: config.unwrap().clone(),
                 tests: populate_test_groups(
                     config.unwrap(),
                     input_paths,
-                    &test_group_file[app_name],
+                    &test_groups,
                     &id_filter,
                 ),
             }
-        }).collect()
+        }).filter(|app_with_tests| !app_with_tests.tests.is_empty()).collect();
+    if apps.is_empty() {
+        println!("WARNING: you have not selected any tests.");
+    }
+    apps
 }
 
 fn populate_test_groups(
