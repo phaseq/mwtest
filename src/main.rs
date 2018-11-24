@@ -229,7 +229,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
 ) {
     let tx = tx.clone();
     let (mut xge_writer, mut xge_reader) = xge_lib::xge();
-    let issued_commands: Arc<Mutex<Vec<(&str, &TestId, Option<String>)>>> =
+    let issued_commands: Arc<Mutex<Vec<(&str, &TestId, TestInstance)>>> =
         Arc::new(Mutex::new(Vec::new()));
     let issued_commands2 = issued_commands.clone();
     scoped.execute(move || {
@@ -246,7 +246,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
                 locked_issued_commands.push((
                     &test_instance.app_name,
                     &test_instance.test_id,
-                    test_instance.command.tmp_dir.clone(),
+                    test_instance,
                 ));
                 request
             };
@@ -265,19 +265,13 @@ fn launch_xge_management_threads<'pool, 'scope>(
                 exit_code: stream_result.exit_code,
                 stdout: stream_result.stdout,
             };
-            let (message, tmp_dir) = {
-                let locked_issued_commands = issued_commands2.lock().unwrap();
-                let command = &locked_issued_commands[stream_result.id as usize];
-                ((command.0, command.1, result), command.2.clone())
-            };
+            let mut locked_issued_commands = issued_commands2.lock().unwrap();
+            let command = &locked_issued_commands[stream_result.id as usize];
+            let message = (command.0, command.1, result);
             tx.send(message)
                 .expect("error in mpsc: could not send result");
-            if let Some(tmp_dir) = &tmp_dir {
-                if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
-                    std::fs::remove_dir(&tmp_dir)
-                        .expect("could not remove test's empty tmp directory!");
-                }
-            }
+            let test_instance = &command.2;
+            test_instance.cleanup();
         }
     });
 }
@@ -368,7 +362,10 @@ fn test_id_to_input(
         } else {
             if app_config.input_is_dir {
                 // machsim case
-                (".".to_string(), full_path.to_string_lossy().into_owned())
+                (
+                    full_path.to_string_lossy().into_owned(),
+                    full_path.to_string_lossy().into_owned(),
+                )
             } else {
                 // verifier case
                 let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
@@ -450,15 +447,19 @@ impl<'a> TestInstance<'a> {
         let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
         let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
         let output_str = stderr.to_owned() + stdout;
+        self.cleanup();
+        TestCommandResult {
+            exit_code: exit_code,
+            stdout: output_str,
+        }
+    }
+
+    fn cleanup(&self) {
         if let Some(tmp_dir) = &self.command.tmp_dir {
             if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
                 std::fs::remove_dir(&tmp_dir)
                     .expect("could not remove test's empty tmp directory!");
             }
-        }
-        TestCommandResult {
-            exit_code: exit_code,
-            stdout: output_str,
         }
     }
 }
