@@ -78,7 +78,7 @@ impl TestGroup {
         &self,
         test_config: &TestConfig,
         input_paths: &InputPaths,
-    ) -> Vec<::TestInput> {
+    ) -> Vec<::TestId> {
         if self.find_glob.is_some() {
             self.generate_path_inputs(&test_config, &input_paths)
         } else if self.find_gtest.is_some() {
@@ -91,10 +91,10 @@ impl TestGroup {
         &self,
         test_config: &TestConfig,
         input_paths: &InputPaths,
-    ) -> Vec<::TestInput> {
+    ) -> Vec<::TestId> {
         let re = regex::Regex::new(&self.id_pattern).unwrap();
         let abs_path = input_paths
-            .testcases_dir
+            .testcases_root
             .join(self.find_glob.clone().unwrap())
             .to_string_lossy()
             .into_owned();
@@ -109,7 +109,7 @@ impl TestGroup {
                 }
             }).map(|p| {
                 let rel_path_buf = p
-                    .strip_prefix(&input_paths.testcases_dir)
+                    .strip_prefix(&input_paths.testcases_root)
                     .unwrap()
                     .to_path_buf();
                 rel_path_buf
@@ -123,13 +123,13 @@ impl TestGroup {
                     .get(1)
                     .map_or("", |m| m.as_str());
 
-                ::TestInput {
+                ::TestId {
                     id: id.to_string(),
                     rel_path: Some(PathBuf::from(rel_path.clone())),
                 }
             }).collect()
     }
-    fn generate_gtest_inputs(&self, input_paths: &InputPaths) -> Vec<::TestInput> {
+    fn generate_gtest_inputs(&self, input_paths: &InputPaths) -> Vec<::TestId> {
         let filter = self.find_gtest.clone().unwrap();
         let cmd = &input_paths
             .build_file
@@ -153,7 +153,7 @@ impl TestGroup {
                 group = line.trim().to_string();
             } else {
                 let test_id = group.clone() + line.trim();
-                results.push(::TestInput {
+                results.push(::TestId {
                     id: test_id,
                     rel_path: None,
                 });
@@ -174,12 +174,12 @@ pub fn read_test_group_file(path: &str) -> Result<TestGroupFile, Box<std::error:
 pub struct InputPaths {
     pub test_config: TestConfigFile,
     pub build_file: BuildFile,
-    pub testcases_dir: PathBuf,
+    pub testcases_root: PathBuf,
 }
 impl InputPaths {
     pub fn from(
         given_build_dir: &Option<&str>,
-        given_testcases_dir: &Option<&str>,
+        given_testcases_root: &Option<&str>,
         given_build_file_path: &Option<&str>,
         given_test_config_path: &Option<&str>,
     ) -> InputPaths {
@@ -189,16 +189,16 @@ impl InputPaths {
             println!("couldn't find build-dir!");
             std::process::exit(-1);
         }
-        let maybe_testcases_dir = given_testcases_dir.map_or_else(
-            || InputPaths::guess_testcases_dir(),
+        let maybe_testcases_root = given_testcases_root.map_or_else(
+            || InputPaths::guess_testcases_root(),
             |d| Some(PathBuf::from(d)),
         );
-        if maybe_testcases_dir.as_ref().map_or(true, |d| !d.exists()) {
+        if maybe_testcases_root.as_ref().map_or(true, |d| !d.exists()) {
             println!("couldn't find testcases-dir!");
             std::process::exit(-1);
         }
         let build_dir = maybe_build_dir.unwrap();
-        let testcases_dir = maybe_testcases_dir.unwrap();
+        let testcases_root = maybe_testcases_root.unwrap();
 
         let root_dir = std::env::current_exe()
             .unwrap()
@@ -215,7 +215,7 @@ impl InputPaths {
         InputPaths {
             test_config: test_config,
             build_file: build_file,
-            testcases_dir: PathBuf::from(testcases_dir),
+            testcases_root: PathBuf::from(testcases_root),
         }
     }
 
@@ -237,7 +237,7 @@ impl InputPaths {
     fn guess_build_dir() -> Option<PathBuf> {
         InputPaths::find_root_dir().map(|p| p.join("dev"))
     }
-    fn guess_testcases_dir() -> Option<PathBuf> {
+    fn guess_testcases_root() -> Option<PathBuf> {
         InputPaths::find_root_dir().map(|p| p.join("testcases"))
     }
 }
