@@ -17,6 +17,7 @@ use scoped_threadpool::Pool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{mpsc, Arc, Mutex};
 use uuid::Uuid;
 
 #[global_allocator]
@@ -175,13 +176,10 @@ fn cmd_run(
     };
     let mut pool = Pool::new(n_workers as u32);
     pool.scoped(|scoped| {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (xge_tx, xge_rx) = std::sync::mpsc::channel();
+        let (tx, rx) = mpsc::channel();
+        let (xge_tx, xge_rx) = mpsc::channel::<TestInstance>();
         if run_config.xge {
-            let tx = tx.clone();
-            scoped.execute(move || {
-                run_xge_async(&xge_rx, &tx);
-            });
+            launch_xge_management_threads(scoped, xge_rx, &tx);
         }
         for test_template in &tests {
             for _ in 0..run_config.repeat {
@@ -220,6 +218,67 @@ fn cmd_run(
             stdout_report.add(i, n, &app_name, &test_id.id, &output);
         }
         xml_report.write().expect("failed to write report!");
+    });
+}
+
+type ResultMessage<'a> = (&'a str, &'a TestId, TestCommandResult);
+fn launch_xge_management_threads<'pool, 'scope>(
+    scoped: &scoped_threadpool::Scope<'pool, 'scope>,
+    xge_rx: mpsc::Receiver<TestInstance<'scope>>,
+    tx: &mpsc::Sender<ResultMessage<'scope>>,
+) {
+    let tx = tx.clone();
+    let (mut xge_writer, mut xge_reader) = xge_lib::xge();
+    let issued_commands: Arc<Mutex<Vec<(&str, &TestId, Option<String>)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let issued_commands2 = issued_commands.clone();
+    scoped.execute(move || {
+        for test_instance in xge_rx.iter() {
+            let request = {
+                let mut locked_issued_commands = issued_commands.lock().unwrap();
+                let request = xge_lib::StreamRequest {
+                    id: locked_issued_commands.len() as u64,
+                    title: test_instance.test_id.id.clone(),
+                    cwd: test_instance.command.cwd.clone(),
+                    command: test_instance.command.command.clone(),
+                    local: false,
+                };
+                locked_issued_commands.push((
+                    &test_instance.app_name,
+                    &test_instance.test_id,
+                    test_instance.command.tmp_dir.clone(),
+                ));
+                request
+            };
+
+            xge_writer
+                .run(&request)
+                .expect("error in xge.run(): could not send command");
+        }
+        xge_writer
+            .done()
+            .expect("error in xge.done(): could not close socket");
+    });
+    scoped.execute(move || {
+        for stream_result in xge_reader.results() {
+            let result = TestCommandResult {
+                exit_code: stream_result.exit_code,
+                stdout: stream_result.stdout,
+            };
+            let (message, tmp_dir) = {
+                let locked_issued_commands = issued_commands2.lock().unwrap();
+                let command = &locked_issued_commands[stream_result.id as usize];
+                ((command.0, command.1, result), command.2.clone())
+            };
+            tx.send(message)
+                .expect("error in mpsc: could not send result");
+            if let Some(tmp_dir) = &tmp_dir {
+                if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
+                    std::fs::remove_dir(&tmp_dir)
+                        .expect("could not remove test's empty tmp directory!");
+                }
+            }
+        }
     });
 }
 
@@ -351,20 +410,6 @@ fn test_command_generator(
     }
 }
 
-/*struct TestRunner<'a> {
-    tx: std::sync::mpsc::Receiver<(&'a str, &'a TestId, TestCommand)>,
-    xge_rx: std::sync::mpsc::Sender<(&'a str, &'a TestId, TestCommandResult)>,
-    xge: xge_lib::XGE,
-}
-impl TestRunner {
-    fn new() -> TestRunner {
-        let (xge_tx, xge_rx) = std::sync::mpsc::channel();
-    }
-    fn run_xge(test_instance: TestInstance) {
-
-    }
-}*/
-
 struct TestInstanceCreator<'a> {
     app_name: &'a str,
     test_id: &'a TestId,
@@ -414,47 +459,6 @@ impl<'a> TestInstance<'a> {
         TestCommandResult {
             exit_code: exit_code,
             stdout: output_str,
-        }
-    }
-}
-
-fn run_xge_async<'a>(
-    rx: &std::sync::mpsc::Receiver<(TestInstance<'a>)>,
-    tx: &std::sync::mpsc::Sender<(&'a str, &'a TestId, TestCommandResult)>,
-) {
-    let mut xge = xge_lib::XGE::new();
-    let mut issued_commands: Vec<(&str, &TestId, Option<String>)> = Vec::new();
-    for test_instance in rx.iter() {
-        let request = xge_lib::StreamRequest {
-            id: issued_commands.len() as u64,
-            title: test_instance.test_id.id.clone(),
-            cwd: test_instance.command.cwd.clone(),
-            command: test_instance.command.command.clone(),
-            local: false,
-        };
-        issued_commands.push((
-            &test_instance.app_name,
-            &test_instance.test_id,
-            test_instance.command.tmp_dir.clone(),
-        ));
-        xge.run(&request)
-            .expect("error in xge.run(): could not send command");
-    }
-    xge.done()
-        .expect("error in xge.done(): could not close socket");
-    for stream_result in xge.results() {
-        let command = &issued_commands[stream_result.id as usize];
-        let result = TestCommandResult {
-            exit_code: stream_result.exit_code,
-            stdout: stream_result.stdout,
-        };
-        tx.send((command.0, command.1, result))
-            .expect("error in mpsc: could not send result");
-        if let Some(tmp_dir) = &command.2 {
-            if !std::fs::read_dir(&tmp_dir).unwrap().next().is_some() {
-                std::fs::remove_dir(&tmp_dir)
-                    .expect("could not remove test's empty tmp directory!");
-            }
         }
     }
 }
