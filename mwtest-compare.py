@@ -259,11 +259,10 @@ def comparers_from_args(args):
 
 
 def find_report():
-    try:
-        from mwtest import find_default_root_path
-        return os.path.join(find_default_root_path(), 'test_output', 'results.xml')
-    except:
-        return None
+    path = os.path.join('test_output', 'results.xml')
+    if os.path.exists(path):
+        return path
+    print "you have to pass the location of the results.xml file"
 
 
 def cli():
@@ -281,6 +280,7 @@ def cli():
         print("could not find results.xml at {}!".format(args.file))
         exit(1)
 
+    print "loading report at {}".format(args.file)
     comparers = comparers_from_args(args)
     report = load_report(args.file)
     Dialog(report, comparers)
