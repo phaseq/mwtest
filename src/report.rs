@@ -3,45 +3,54 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-pub struct XmlReport {
+pub struct XmlReport<'a> {
     file: File,
-    results: HashMap<String, Vec<(String, ::TestCommandResult)>>,
+    file_path: PathBuf,
+    results: HashMap<String, Vec<(::TestInstance<'a>, ::TestCommandResult)>>,
+    testcases_root: String,
 }
-impl XmlReport {
-    pub fn create(path: &Path) -> std::io::Result<XmlReport> {
+impl<'a> XmlReport<'a> {
+    pub fn create(path: &Path, testcases_root: &str) -> std::io::Result<XmlReport<'a>> {
         Ok(XmlReport {
             file: File::create(&path)?,
+            file_path: PathBuf::from(path),
             results: HashMap::new(),
+            testcases_root: testcases_root.to_string(),
         })
     }
-    pub fn add(&mut self, test_name: &str, test_id: &str, test_result: &::TestCommandResult) {
-        match self.results.entry(test_name.to_string()) {
+    pub fn add(&mut self, test_instance: ::TestInstance<'a>, test_result: &::TestCommandResult) {
+        match self.results.entry(test_instance.app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
-                e.insert(vec![(test_id.to_string(), test_result.clone())]);
+                e.insert(vec![(test_instance, test_result.clone())]);
             }
             hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().push((test_id.to_string(), test_result.clone()));
+                e.get_mut().push((test_instance, test_result.clone()));
             }
         }
     }
     pub fn write(&mut self) -> std::io::Result<()> {
         let mut out = BufWriter::new(&self.file);
         out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
+        out.write(
+            format!(
+                "<config><reference_root>{}</reference_root></config>",
+                self.testcases_root
+            ).as_bytes(),
+        )?;
         out.write(b"<testsuites>")?;
         for (test_name, test_results) in &self.results {
             out.write(
                 format!(
-                    "<testsuite name=\"{}\" test=\"{}\" failures=\"{}\">",
+                    "<testsuite name=\"{}\" test=\"{}\">",
                     test_name,
-                    test_results.len(),
-                    -1
+                    test_results.len()
                 ).as_bytes(),
             )?;
             for result in test_results.iter() {
                 out.write(
                     format!(
                         "<testcase name=\"{}\">",
-                        htmlescape::encode_attribute(&result.0)
+                        htmlescape::encode_attribute(&result.0.test_id.id)
                     ).as_bytes(),
                 )?;
                 out.write(format!("<exit-code>{}</exit_code>", result.1.exit_code).as_bytes())?;
@@ -51,6 +60,28 @@ impl XmlReport {
                         htmlescape::encode_minimal(&result.1.stdout)
                     ).as_bytes(),
                 )?;
+                if let Some(tmp_dir) = &result.0.command.tmp_dir {
+                    if PathBuf::from(tmp_dir).exists() {
+                        let rel_tmp_dir = PathBuf::from(tmp_dir);
+                        let rel_tmp_dir = rel_tmp_dir
+                            .strip_prefix(self.file_path.parent().unwrap())
+                            .unwrap();
+                        let rel_tmp_dir = rel_tmp_dir.to_string_lossy().into_owned();
+                        let rel_reference_path = match &result.0.test_id.rel_path {
+                            ::RelTestLocation::Dir(p) => p,
+                            ::RelTestLocation::File(p) => p,
+                            _ => panic!(""),
+                        }.to_string_lossy()
+                        .into_owned();
+                        out.write(
+                            format!(
+                                "<artifact reference=\"{}\" location=\"{}\" />",
+                                htmlescape::encode_attribute(&rel_reference_path),
+                                htmlescape::encode_attribute(&rel_tmp_dir)
+                            ).as_bytes(),
+                        )?;
+                    }
+                }
                 out.write(b"</testcase>")?;
             }
             out.write(b"</testuite>")?;

@@ -128,7 +128,10 @@ fn main() {
                 .expect("could not clean up tmp directory!");
         }
         std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
-        println!("Test artifacts will be written to {:?}.", &output_paths.out_dir);
+        println!(
+            "Test artifacts will be written to {:?}.",
+            &output_paths.out_dir
+        );
         let run_config = RunConfig {
             verbose: matches.is_present("verbose"),
             parallel: matches.is_present("threadpool"),
@@ -207,7 +210,7 @@ fn cmd_run(
                     let tx = tx.clone();
                     scoped.execute(move || {
                         let output = test_instance.run(&output_paths);
-                        tx.send((test_instance.app_name, test_instance.test_id, output))
+                        tx.send((test_instance, output))
                             .expect("channel did not accept test result!");
                     });
                 }
@@ -216,7 +219,8 @@ fn cmd_run(
         drop(xge_tx);
 
         let mut txt_report = report::FileLogger::create(&output_paths.out_dir);
-        let mut xml_report = report::XmlReport::create(&output_paths.out_dir.join("results.xml"))
+        let xml_location = &output_paths.out_dir.join("results.xml");
+        let mut xml_report = report::XmlReport::create(xml_location, input_paths.testcases_root.to_str().unwrap())
             .expect("could not create test report!");
 
         let n = tests.len() * run_config.repeat;
@@ -226,17 +230,23 @@ fn cmd_run(
         stdout_report.init(0, n);
 
         let mut i = 0;
-        for (app_name, test_id, output) in rx.iter().take(n) {
+        for (test_instance, output) in rx.iter().take(n) {
             i += 1;
-            txt_report.add(&app_name, &output.stdout);
-            xml_report.add(&app_name, &test_id.id, &output);
-            stdout_report.add(i, n, &app_name, &test_id.id, &output);
+            txt_report.add(&test_instance.app_name, &output.stdout);
+            stdout_report.add(
+                i,
+                n,
+                &test_instance.app_name,
+                &test_instance.test_id.id,
+                &output,
+            );
+            xml_report.add(test_instance, &output);
         }
         xml_report.write().expect("failed to write report!");
     });
 }
 
-type ResultMessage<'a> = (&'a str, &'a TestId, TestCommandResult);
+type ResultMessage<'a> = (TestInstance<'a>, TestCommandResult);
 fn launch_xge_management_threads<'pool, 'scope>(
     scoped: &scoped_threadpool::Scope<'pool, 'scope>,
     xge_rx: mpsc::Receiver<TestInstance<'scope>>,
@@ -245,8 +255,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
 ) {
     let tx = tx.clone();
     let (mut xge_writer, mut xge_reader) = xge_lib::xge();
-    let issued_commands: Arc<Mutex<Vec<(&str, &TestId, TestInstance)>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let issued_commands: Arc<Mutex<Vec<TestInstance>>> = Arc::new(Mutex::new(Vec::new()));
     let issued_commands2 = issued_commands.clone();
     scoped.execute(move || {
         for test_instance in xge_rx.iter() {
@@ -259,11 +268,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
                     command: test_instance.command.command.clone(),
                     local: false,
                 };
-                locked_issued_commands.push((
-                    &test_instance.app_name,
-                    &test_instance.test_id,
-                    test_instance,
-                ));
+                locked_issued_commands.push(test_instance);
                 request
             };
 
@@ -281,14 +286,14 @@ fn launch_xge_management_threads<'pool, 'scope>(
                 exit_code: stream_result.exit_code,
                 stdout: stream_result.stdout,
             };
+            let success = result.exit_code == 0;
             let mut locked_issued_commands = issued_commands2.lock().unwrap();
-            let command = &locked_issued_commands[stream_result.id as usize];
-            let message = (command.0, command.1, result);
+            let test_instance = &locked_issued_commands[stream_result.id as usize];
+            let message = (test_instance.clone(), result);
             tx.send(message)
                 .expect("error in mpsc: could not send result");
-            let test_instance = &command.2;
             test_instance
-                .cleanup(&output_paths)
+                .cleanup(success, &output_paths)
                 .expect("failed to clean up temporary output directory!");
         }
     });
@@ -317,7 +322,13 @@ struct GroupWithTests {
 #[derive(Debug, Clone)]
 pub struct TestId {
     pub id: String,
-    pub rel_path: Option<PathBuf>,
+    pub rel_path: RelTestLocation,
+}
+#[derive(Debug, Clone)]
+pub enum RelTestLocation {
+    None,
+    File(PathBuf),
+    Dir(PathBuf),
 }
 
 #[derive(Debug)]
@@ -327,10 +338,10 @@ struct OutputPaths {
 }
 
 #[derive(Debug, Clone)]
-struct TestCommand {
+pub struct TestCommand {
     command: Vec<String>,
     cwd: String,
-    tmp_dir: Option<String>,
+    pub tmp_dir: Option<String>,
 }
 type CommandGenerator = Fn() -> TestCommand;
 
@@ -372,25 +383,23 @@ fn test_id_to_input(
     input_paths: &config::InputPaths,
     app_config: &config::AppConfig,
 ) -> (String, String) {
-    if let Some(rel_path) = &test_id.rel_path {
+    if let RelTestLocation::File(rel_path) = &test_id.rel_path {
         let full_path = input_paths.testcases_root.join(&rel_path);
         if let Some(cwd) = &app_config.cwd {
             // cncsim case
             (full_path.to_string_lossy().into_owned(), cwd.clone())
         } else {
-            if app_config.input_is_dir {
-                // machsim case
-                (
-                    full_path.to_string_lossy().into_owned(),
-                    full_path.to_string_lossy().into_owned(),
-                )
-            } else {
-                // verifier case
-                let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
-                let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
-                (file_name, parent_dir)
-            }
+            // verifier case
+            let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
+            let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
+            (file_name, parent_dir)
         }
+    } else if let RelTestLocation::Dir(rel_path) = &test_id.rel_path {
+        let full_path = input_paths.testcases_root.join(&rel_path);
+        (
+            full_path.to_string_lossy().into_owned(),
+            full_path.to_string_lossy().into_owned(),
+        )
     } else {
         // gtest case
         (test_id.id.clone(), app_config.cwd.clone().unwrap())
@@ -439,11 +448,11 @@ impl<'a> TestInstanceCreator<'a> {
         }
     }
 }
-#[derive(Debug)]
-struct TestInstance<'a> {
-    app_name: &'a str,
+#[derive(Debug, Clone)]
+pub struct TestInstance<'a> {
+    pub app_name: &'a str,
     test_id: &'a TestId,
-    command: TestCommand,
+    pub command: TestCommand,
 }
 impl<'a> TestInstance<'a> {
     fn run(&self, output_paths: &OutputPaths) -> TestCommandResult {
@@ -465,7 +474,7 @@ impl<'a> TestInstance<'a> {
         let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
         let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
         let output_str = stderr.to_owned() + stdout;
-        self.cleanup(&output_paths)
+        self.cleanup(exit_code == 0, &output_paths)
             .expect("failed to clean up temporary output directory!");
         TestCommandResult {
             exit_code: exit_code,
@@ -473,22 +482,53 @@ impl<'a> TestInstance<'a> {
         }
     }
 
-    fn cleanup(&self, output_paths: &OutputPaths) -> std::io::Result<()> {
-        if let Some(tmp_dir) = &self.command.tmp_dir {
-            for entry in std::fs::read_dir(&tmp_dir)? {
-                let entry = entry?;
-                let new_name = output_paths
-                    .out_dir
-                    .clone()
-                    .join(self.test_id.rel_path.clone().unwrap());
-                {
-                    let parent_dir = new_name.parent();
-                    println!("writing {:?} to {:?}", entry, new_name);
-                    std::fs::create_dir_all(parent_dir.unwrap())?;
+    fn cleanup(&self, _equal: bool, _output_paths: &OutputPaths) -> std::io::Result<()> {
+        /*match &self.test_id.rel_path {
+            RelTestLocation::None => {}
+            RelTestLocation::Dir(rel_path) => {
+                let tmp_dir = &self.command.tmp_dir.as_ref().unwrap();
+                //println!("reading {:?}", tmp_dir);
+                if std::fs::read_dir(tmp_dir).unwrap().next().is_some() {
+                    let subdir = if equal { "equal" } else { "different" };
+                    let new_name = output_paths
+                        .out_dir
+                        .clone()
+                        .join(subdir)
+                        .join(rel_path.clone());
+                    {
+                        let parent_dir = new_name.parent();
+                        //println!("writing {:?} to {:?}", tmp_dir, new_name);
+                        std::fs::create_dir_all(parent_dir.unwrap())?;
+                    }
+                    std::fs::rename(tmp_dir, new_name)?;
+                } else {
+                    std::fs::remove_dir(&tmp_dir)?;
                 }
-                std::fs::rename(entry.path(), new_name)?;
             }
-            std::fs::remove_dir(&tmp_dir)?;
+            RelTestLocation::File(rel_path) => {
+                let tmp_dir = &self.command.tmp_dir.as_ref().unwrap();
+                let subdir = if equal { "equal" } else { "different" };
+                for entry in std::fs::read_dir(tmp_dir)? {
+                    let entry = entry?;
+                    let new_name = output_paths
+                        .out_dir
+                        .clone()
+                        .join(subdir)
+                        .join(rel_path.clone());
+                    {
+                        let parent_dir = new_name.parent();
+                        //println!("writing {:?} to {:?}", entry, new_name);
+                        std::fs::create_dir_all(parent_dir.unwrap())?;
+                    }
+                    std::fs::rename(entry.path(), new_name)?;
+                }
+                std::fs::remove_dir(&tmp_dir)?;
+            }
+        }*/
+        if let Some(tmp_path) = &self.command.tmp_dir {
+            if std::fs::read_dir(tmp_path).unwrap().next().is_none() {
+                std::fs::remove_dir(&tmp_path)?;
+            }
         }
         Ok(())
     }
