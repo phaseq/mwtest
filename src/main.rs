@@ -82,7 +82,11 @@ fn main() {
                 .arg(Arg::with_name("repeat")
                     .long("repeat")
                     .takes_value(true)
-                    .default_value("1")),
+                    .default_value("1"))
+                .arg(Arg::with_name("RERUN_IF_FAILED")
+                    .long("rerun-if-failed")
+                    .takes_value(true)
+                    .default_value("0"))
         ).get_matches();
 
     let input_paths = config::InputPaths::from(
@@ -141,6 +145,11 @@ fn main() {
                 .unwrap()
                 .parse()
                 .expect("expected numeric value for repeat"),
+            rerun_if_failed: matches
+                .value_of("RERUN_IF_FAILED")
+                .unwrap()
+                .parse()
+                .expect("expected numeric value for rerun-if-failed"),
         };
         cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
     }
@@ -194,15 +203,24 @@ fn cmd_run(
     };
     let mut pool = Pool::new(n_workers as u32);
     pool.scoped(|scoped| {
+        let mut report = report::Report::create(
+            &output_paths.out_dir,
+            input_paths.testcases_root.to_str().unwrap(),
+            run_config.verbose,
+        );
+
+        let mut n = tests.len() * run_config.repeat;
+
         let (tx, rx) = mpsc::channel();
         let (xge_tx, xge_rx) = mpsc::channel::<TestInstance>();
         if run_config.xge {
             launch_xge_management_threads(scoped, xge_rx, &tx, &output_paths);
         }
+
         for test_template in &tests {
             for _ in 0..run_config.repeat {
                 let test_instance = test_template.instantiate();
-                if run_config.xge {
+                if run_config.xge && test_instance.allow_xge {
                     xge_tx
                         .send(test_instance)
                         .expect("channel did not accept test input!");
@@ -216,34 +234,43 @@ fn cmd_run(
                 }
             }
         }
-        drop(xge_tx);
 
-        let mut txt_report = report::FileLogger::create(&output_paths.out_dir);
-        let xml_location = &output_paths.out_dir.join("results.xml");
-        let mut xml_report =
-            report::XmlReport::create(xml_location, input_paths.testcases_root.to_str().unwrap())
-                .expect("could not create test report!");
-
-        let n = tests.len() * run_config.repeat;
-        let stdout_report = report::StdOut {
-            verbose: run_config.verbose,
-        };
-        stdout_report.init(0, n);
-
+        let mut relaunched_tests = HashMap::new();
         let mut i = 0;
-        for (test_instance, output) in rx.iter().take(n) {
+        while i < n {
+            let (test_instance, output) = rx.iter().next().unwrap();
             i += 1;
-            txt_report.add(&test_instance.app_name, &output.stdout);
-            stdout_report.add(
-                i,
-                n,
-                &test_instance.app_name,
-                &test_instance.test_id.id,
-                &output,
-            );
-            xml_report.add(test_instance, &output);
+            if run_config.rerun_if_failed > 0 {
+                let n_relaunched = relaunched_tests
+                    .entry((test_instance.app_name, &test_instance.test_id.id))
+                    .or_insert(0);
+                if *n_relaunched < run_config.rerun_if_failed {
+                    *n_relaunched += 1;
+                    n += 1;
+                    let test_template = tests
+                        .iter()
+                        .find(|t| {
+                            t.app_name == test_instance.app_name
+                                && t.test_id.id == test_instance.test_id.id
+                        }).unwrap();
+
+                    let test_instance = test_template.instantiate();
+                    if run_config.xge && test_instance.allow_xge {
+                        xge_tx
+                            .send(test_instance)
+                            .expect("channel did not accept test input!");
+                    } else {
+                        let tx = tx.clone();
+                        scoped.execute(move || {
+                            let output = test_instance.run(&output_paths);
+                            tx.send((test_instance, output))
+                                .expect("channel did not accept test result!");
+                        });
+                    }
+                }
+            }
+            report.add(i, n, test_instance, &output);
         }
-        xml_report.write().expect("failed to write report!");
     });
 }
 
@@ -305,6 +332,7 @@ struct RunConfig {
     parallel: bool,
     xge: bool,
     repeat: usize,
+    rerun_if_failed: usize,
 }
 
 #[derive(Debug)]
@@ -377,6 +405,7 @@ fn create_run_commands<'a>(
                 tests.push(TestInstanceCreator {
                     app_name: &app.name,
                     test_id: &test_id,
+                    allow_xge: group.test_group.xge,
                     command_generator: generator,
                 });
             }
@@ -455,6 +484,7 @@ fn test_command_generator(
 struct TestInstanceCreator<'a> {
     app_name: &'a str,
     test_id: &'a TestId,
+    allow_xge: bool,
     command_generator: Box<CommandGenerator>,
 }
 impl<'a> TestInstanceCreator<'a> {
@@ -462,6 +492,7 @@ impl<'a> TestInstanceCreator<'a> {
         TestInstance {
             app_name: self.app_name,
             test_id: self.test_id,
+            allow_xge: self.allow_xge,
             command: (self.command_generator)(),
         }
     }
@@ -470,6 +501,7 @@ impl<'a> TestInstanceCreator<'a> {
 pub struct TestInstance<'a> {
     pub app_name: &'a str,
     test_id: &'a TestId,
+    allow_xge: bool,
     pub command: TestCommand,
 }
 impl<'a> TestInstance<'a> {
@@ -565,7 +597,8 @@ fn test_apps_from_args(
             true
         }
     };
-    let apps: Vec<AppWithTests> = args.values_of("test_app")
+    let apps: Vec<AppWithTests> = args
+        .values_of("test_app")
         .unwrap()
         .map(|app_name| {
             let config = input_paths.app_config.get(app_name);
@@ -582,14 +615,10 @@ fn test_apps_from_args(
             AppWithTests {
                 name: app_name.to_string(),
                 config: config.unwrap().clone(),
-                tests: populate_test_groups(
-                    config.unwrap(),
-                    input_paths,
-                    &test_groups,
-                    &id_filter,
-                ),
+                tests: populate_test_groups(config.unwrap(), input_paths, &test_groups, &id_filter),
             }
-        }).filter(|app_with_tests| !app_with_tests.tests.is_empty()).collect();
+        }).filter(|app_with_tests| !app_with_tests.tests.is_empty())
+        .collect();
     if apps.is_empty() {
         println!("WARNING: you have not selected any tests.");
     }

@@ -3,14 +3,50 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-pub struct XmlReport<'a> {
+pub struct Report<'a> {
+    std_out: StdOut,
+    file_logger: FileLogger<'a>,
+    xml_report: XmlReport<'a>,
+}
+impl<'a> Report<'a> {
+    pub fn create(artifacts_root: &'a Path, testcases_root: &str, verbose: bool) -> Report<'a> {
+        let xml_location = &artifacts_root.join("results.xml");
+        let report = Report {
+            std_out: StdOut { verbose: verbose },
+            file_logger: FileLogger::create(&artifacts_root),
+            xml_report: XmlReport::create(&xml_location, &testcases_root).unwrap(),
+        };
+        report.std_out.init();
+        report
+    }
+    pub fn add(
+        &mut self,
+        i: usize,
+        n: usize,
+        test_instance: ::TestInstance<'a>,
+        test_result: &::TestCommandResult,
+    ) {
+        self.std_out.add(
+            i,
+            n,
+            &test_instance.app_name,
+            &test_instance.test_id.id,
+            &test_result,
+        );
+        self.file_logger
+            .add(&test_instance.app_name, &test_result.stdout);
+        self.xml_report.add(test_instance, &test_result);
+    }
+}
+
+struct XmlReport<'a> {
     file: File,
     file_path: PathBuf,
     results: HashMap<String, Vec<(::TestInstance<'a>, ::TestCommandResult)>>,
     testcases_root: String,
 }
 impl<'a> XmlReport<'a> {
-    pub fn create(path: &Path, testcases_root: &str) -> std::io::Result<XmlReport<'a>> {
+    fn create(path: &Path, testcases_root: &str) -> std::io::Result<XmlReport<'a>> {
         Ok(XmlReport {
             file: File::create(&path)?,
             file_path: PathBuf::from(path),
@@ -18,7 +54,7 @@ impl<'a> XmlReport<'a> {
             testcases_root: testcases_root.to_string(),
         })
     }
-    pub fn add(&mut self, test_instance: ::TestInstance<'a>, test_result: &::TestCommandResult) {
+    fn add(&mut self, test_instance: ::TestInstance<'a>, test_result: &::TestCommandResult) {
         match self.results.entry(test_instance.app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
                 e.insert(vec![(test_instance, test_result.clone())]);
@@ -28,7 +64,7 @@ impl<'a> XmlReport<'a> {
             }
         }
     }
-    pub fn write(&mut self) -> std::io::Result<()> {
+    fn write(&mut self) -> std::io::Result<()> {
         let mut out = BufWriter::new(&self.file);
         out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><mwtest>")?;
         out.write(
@@ -53,7 +89,9 @@ impl<'a> XmlReport<'a> {
                         htmlescape::encode_attribute(&test_instance.test_id.id)
                     ).as_bytes(),
                 )?;
-                out.write(format!("<exit_code>{}</exit_code>", command_result.exit_code).as_bytes())?;
+                out.write(
+                    format!("<exit_code>{}</exit_code>", command_result.exit_code).as_bytes(),
+                )?;
                 if command_result.exit_code != 0 {
                     out.write(b"<failure />")?;
                 }
@@ -99,16 +137,21 @@ impl<'a> XmlReport<'a> {
         Ok(())
     }
 }
+impl<'a> Drop for XmlReport<'a> {
+    fn drop(&mut self) {
+        self.write().expect("failed to write xml log!");
+    }
+}
 
-pub struct StdOut {
-    pub verbose: bool,
+struct StdOut {
+    verbose: bool,
 }
 impl StdOut {
-    pub fn init(&self, i: usize, n: usize) {
-        print!("[{}/{}] waiting for results...", i, n);
+    fn init(&self) {
+        print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
-    pub fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &::TestCommandResult) {
+    fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &::TestCommandResult) {
         let ok_or_failed = if result.exit_code == 0 {
             "Ok"
         } else {
@@ -135,18 +178,18 @@ impl Drop for StdOut {
     }
 }
 
-pub struct FileLogger<'a> {
+struct FileLogger<'a> {
     log_dir: PathBuf,
     files: HashMap<&'a str, File>,
 }
 impl<'a> FileLogger<'a> {
-    pub fn create(log_dir: &Path) -> FileLogger {
+    fn create(log_dir: &Path) -> FileLogger {
         FileLogger {
             log_dir: log_dir.to_path_buf(),
             files: HashMap::new(),
         }
     }
-    pub fn add(&mut self, test_name: &'a str, output: &str) {
+    fn add(&mut self, test_name: &'a str, output: &str) {
         let log_dir = &self.log_dir;
         let log_file = self.files.entry(test_name).or_insert_with(|| {
             File::create(log_dir.join(PathBuf::from(test_name.to_owned() + ".txt")))

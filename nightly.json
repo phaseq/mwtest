@@ -13,12 +13,22 @@
     {
       "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*-*RunLocal*"],
       "id_pattern": "(.*)"
+    },
+    {
+      "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*RunLocal*"],
+      "id_pattern": "(.*)",
+      "xge": false
     }
   ],
   "verifierApi": [
     {
       "find_gtest": ["{{mwVerifierApiTest}}", "--gtest_list_tests", "--gtest_filter=*-*RunLocal*"],
       "id_pattern": "(.*)"
+    },
+    {
+      "find_gtest": ["{{mwVerifierApiTest}}", "--gtest_list_tests", "--gtest_filter=*RunLocal*"],
+      "id_pattern": "(.*)",
+      "xge": false
     }
   ],
   "machsim": [

@@ -72,6 +72,8 @@ pub struct TestGroup {
     pub find_glob: Option<String>,
     pub find_gtest: Option<Vec<String>>,
     pub id_pattern: String,
+    #[serde(default = "true_value")]
+    pub xge: bool,
 }
 impl TestGroup {
     pub fn generate_test_inputs(
@@ -169,6 +171,10 @@ impl TestGroup {
         }
         results
     }
+}
+
+fn true_value() -> bool {
+    true
 }
 
 pub type TestGroupFile = HashMap<String, Vec<TestGroup>>;

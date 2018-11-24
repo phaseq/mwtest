@@ -19,7 +19,7 @@ pub struct StreamResult {
 }
 
 pub fn xge() -> (XGEWriter, XGEReader) {
-	let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let xge_exe = String::from(
         std::env::current_exe()
@@ -60,7 +60,7 @@ impl XGEWriter {
 
 pub struct XGEReader(std::process::Child);
 impl XGEReader {
-	pub fn results(&mut self) -> impl Iterator<Item = StreamResult> + '_ {
+    pub fn results(&mut self) -> impl Iterator<Item = StreamResult> + '_ {
         let reader = std::io::BufReader::new(self.0.stdout.as_mut().unwrap());
         reader
             .lines()
