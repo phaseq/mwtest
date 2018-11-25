@@ -215,7 +215,7 @@ fn run_in_scope<'scope>(
     output_paths: &'scope OutputPaths,
     run_config: &'scope RunConfig,
 ) -> bool {
-    let mut report = report::Report::create(
+    let mut report = report::Report::new(
         &output_paths.out_dir,
         input_paths.testcases_root.to_str().unwrap(),
         run_config.verbose,

@@ -4,19 +4,19 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 pub struct Report<'a> {
-    std_out: StdOut,
+    std_out: CliLogger,
     file_logger: FileLogger<'a>,
     xml_report: XmlReport<'a>,
 }
 impl<'a> Report<'a> {
-    pub fn create(artifacts_root: &'a Path, testcases_root: &str, verbose: bool) -> Report<'a> {
+    pub fn new(artifacts_root: &'a Path, testcases_root: &str, verbose: bool) -> Report<'a> {
         let xml_location = &artifacts_root.join("results.xml");
         let report = Report {
-            std_out: StdOut { verbose: verbose },
-            file_logger: FileLogger::create(&artifacts_root),
-            xml_report: XmlReport::create(&xml_location, &testcases_root).unwrap(),
+            std_out: CliLogger { verbose: verbose },
+            file_logger: FileLogger::new(&artifacts_root),
+            xml_report: XmlReport::new(&xml_location, &testcases_root).unwrap(),
         };
-        report.std_out.init();
+        report.std_out.new();
         report
     }
     pub fn add(
@@ -46,7 +46,7 @@ struct XmlReport<'a> {
     testcases_root: String,
 }
 impl<'a> XmlReport<'a> {
-    fn create(path: &Path, testcases_root: &str) -> std::io::Result<XmlReport<'a>> {
+    fn new(path: &Path, testcases_root: &str) -> std::io::Result<XmlReport<'a>> {
         Ok(XmlReport {
             file: File::create(&path)?,
             file_path: PathBuf::from(path),
@@ -143,11 +143,11 @@ impl<'a> Drop for XmlReport<'a> {
     }
 }
 
-struct StdOut {
+struct CliLogger {
     verbose: bool,
 }
-impl StdOut {
-    fn init(&self) {
+impl CliLogger {
+    fn new(&self) {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
@@ -170,7 +170,7 @@ impl StdOut {
         std::io::stdout().flush().unwrap();
     }
 }
-impl Drop for StdOut {
+impl Drop for CliLogger {
     fn drop(&mut self) {
         if !self.verbose {
             println!();
@@ -183,7 +183,7 @@ struct FileLogger<'a> {
     files: HashMap<&'a str, File>,
 }
 impl<'a> FileLogger<'a> {
-    fn create(log_dir: &Path) -> FileLogger {
+    fn new(log_dir: &Path) -> FileLogger {
         FileLogger {
             log_dir: log_dir.to_path_buf(),
             files: HashMap::new(),
