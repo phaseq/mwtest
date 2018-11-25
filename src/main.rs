@@ -409,7 +409,7 @@ struct RunConfig {
 #[derive(Debug)]
 struct AppWithTests {
     name: String,
-    config: config::AppConfig,
+    config: config::AppProperties,
     tests: Vec<GroupWithTests>,
 }
 
@@ -493,11 +493,11 @@ fn create_run_commands<'a>(
 fn test_id_to_input(
     test_id: &TestId,
     input_paths: &config::InputPaths,
-    app_config: &config::AppConfig,
+    app_properties: &config::AppProperties,
 ) -> (String, String) {
     if let RelTestLocation::File(rel_path) = &test_id.rel_path {
         let full_path = input_paths.testcases_root.join(&rel_path);
-        if let Some(cwd) = &app_config.cwd {
+        if let Some(cwd) = &app_properties.cwd {
             // cncsim case
             (full_path.to_string_lossy().into_owned(), cwd.clone())
         } else {
@@ -514,7 +514,7 @@ fn test_id_to_input(
         )
     } else {
         // gtest case
-        (test_id.id.clone(), app_config.cwd.clone().unwrap())
+        (test_id.id.clone(), app_properties.cwd.clone().unwrap())
     }
 }
 
@@ -686,13 +686,10 @@ fn test_apps_from_args(
         .values_of("test_app")
         .unwrap()
         .map(|app_name| {
-            let config = input_paths.app_config.get(app_name);
+            let config = input_paths.app_properties.get(app_name);
             if config.is_none() {
-                let test_names: Vec<&String> = input_paths.app_config.keys().collect();
-                println!(
-                    "\"{}\" not found: must be one of {:?}",
-                    app_name, test_names
-                );
+                let app_names = input_paths.app_properties.app_names();
+                println!("\"{}\" not found: must be one of {:?}", app_name, app_names);
                 std::process::exit(-1);
             }
             let empty_vec = vec![];
@@ -711,7 +708,7 @@ fn test_apps_from_args(
 }
 
 fn populate_test_groups(
-    test_config: &config::AppConfig,
+    test_config: &config::AppProperties,
     input_paths: &config::InputPaths,
     test_groups: &Vec<config::TestGroup>,
     id_filter: &Fn(&str) -> bool,

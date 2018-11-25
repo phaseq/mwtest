@@ -5,30 +5,42 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Deserialize)]
+pub struct AppPropertiesFile(HashMap<String, AppProperties>);
+impl AppPropertiesFile {
+    fn open(
+        path: &Path,
+        build_layout: &BuildLayoutFile,
+    ) -> Result<AppPropertiesFile, Box<std::error::Error>> {
+        let file = File::open(path)?;
+        let mut content: AppPropertiesFile = serde_json::from_reader(file)?;
+        for test in content.0.values_mut() {
+            (*test).apply_patterns(&build_layout.exes);
+        }
+        Ok(content)
+    }
+
+    pub fn get(&self, app_name: &str) -> Option<&AppProperties> {
+        self.0.get(app_name)
+    }
+
+    pub fn app_names(&self) -> Vec<String> {
+        self.0.keys().cloned().collect()
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
-pub struct AppConfig {
+pub struct AppProperties {
     pub command_template: CommandTemplate,
     pub cwd: Option<String>,
     #[serde(default)]
     pub input_is_dir: bool,
 }
-impl AppConfig {
+impl AppProperties {
     fn apply_patterns(&mut self, patterns: &HashMap<String, String>) {
         self.command_template = self.command_template.apply_all(patterns);
         self.cwd = self.cwd.clone().map(|d| patterns[&d].clone());
     }
-}
-pub type AppConfigFile = HashMap<String, AppConfig>;
-fn read_app_config_file(
-    path: &Path,
-    build_file: &BuildLayoutFile,
-) -> Result<AppConfigFile, Box<std::error::Error>> {
-    let file = File::open(path)?;
-    let mut content: AppConfigFile = serde_json::from_reader(file)?;
-    for test in content.values_mut() {
-        (*test).apply_patterns(&build_file.exes);
-    }
-    Ok(content)
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,7 +90,7 @@ pub struct TestGroup {
 impl TestGroup {
     pub fn generate_test_inputs(
         &self,
-        test_config: &AppConfig,
+        test_config: &AppProperties,
         input_paths: &InputPaths,
     ) -> Vec<::TestId> {
         if self.find_glob.is_some() {
@@ -91,7 +103,7 @@ impl TestGroup {
     }
     fn generate_path_inputs(
         &self,
-        test_config: &AppConfig,
+        test_config: &AppProperties,
         input_paths: &InputPaths,
     ) -> Vec<::TestId> {
         let re = regex::Regex::new(&self.id_pattern).unwrap();
@@ -110,24 +122,22 @@ impl TestGroup {
                     p
                 }
             }).map(|p| {
-                let rel_path_buf = p
-                    .strip_prefix(&input_paths.testcases_root)
+                p.strip_prefix(&input_paths.testcases_root)
                     .unwrap()
-                    .to_path_buf();
-                rel_path_buf
                     .to_string_lossy()
                     .to_string()
                     .replace('\\', "/")
             }).map(|rel_path: String| {
-                let capture = re.captures(&rel_path);
-                if capture.is_none() {
-                    println!(
-                        "pattern did not match on one of the tests!\n pattern: {}\n test: {}",
-                        &self.id_pattern, &rel_path
-                    );
-                    std::process::exit(-1);
-                }
-                let id = capture.unwrap().get(1).map_or("", |m| m.as_str());
+                let id = match re.captures(&rel_path) {
+                    Some(capture) => capture.get(1).map_or("", |m| m.as_str()),
+                    None => {
+                        println!(
+                            "pattern did not match on one of the tests!\n pattern: {}\n test: {}",
+                            &self.id_pattern, &rel_path
+                        );
+                        std::process::exit(-1);
+                    }
+                };
                 let test_location = if test_config.input_is_dir {
                     ::RelTestLocation::Dir(PathBuf::from(&rel_path))
                 } else {
@@ -186,25 +196,17 @@ pub fn read_test_group_file(path: &Path) -> Result<TestGroupFile, Box<std::error
 
 #[derive(Debug)]
 pub struct InputPaths {
-    pub app_config: AppConfigFile,
+    pub app_properties: AppPropertiesFile,
     pub build_file: BuildLayoutFile,
     pub preset_path: PathBuf,
     pub testcases_root: PathBuf,
 }
 impl InputPaths {
-    fn get_root_path() -> PathBuf {
-        std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("../../")
-    }
-
     pub fn get_registered_tests() -> Vec<String> {
-        let path = InputPaths::get_root_path().join("tests.json");
+        let path = InputPaths::get_mwtest_root().join("tests.json");
         let file = File::open(path).unwrap();
-        let content: AppConfigFile = serde_json::from_reader(file).unwrap();
-        content.keys().cloned().collect()
+        let content: AppPropertiesFile = serde_json::from_reader(file).unwrap();
+        content.app_names()
     }
 
     pub fn from(
@@ -213,41 +215,10 @@ impl InputPaths {
         build_layout: &str,
         preset: &str,
     ) -> InputPaths {
-        let maybe_build_dir = given_build_dir
-            .map_or_else(|| InputPaths::guess_build_dir(), |d| Some(PathBuf::from(d)));
-        if maybe_build_dir.as_ref().map_or(true, |d| !d.exists()) {
-            println!("couldn't find build-dir!");
-            std::process::exit(-1);
-        }
-        let maybe_testcases_root = given_testcases_root.map_or_else(
-            || InputPaths::guess_testcases_root(),
-            |d| Some(PathBuf::from(d)),
-        );
-        if maybe_testcases_root.as_ref().map_or(true, |d| !d.exists()) {
-            println!("couldn't find testcases-dir!");
-            std::process::exit(-1);
-        }
-        let build_dir = maybe_build_dir.unwrap();
-        let testcases_root = maybe_testcases_root.unwrap();
-
-        let root_dir = InputPaths::get_root_path();
-
-        let mut build_layout_path = root_dir.join(build_layout.to_owned() + ".json");
-        if !build_layout_path.exists() {
-            build_layout_path = PathBuf::from(build_layout);
-            if !build_layout_path.exists() {
-                println!("could not determine build layout! Please make sure that the path given via --build exists!");
-                std::process::exit(-1);
-            }
-        }
-        let mut preset_path = root_dir.join(preset.to_owned() + ".json");
-        if !preset_path.exists() {
-            preset_path = PathBuf::from(preset);
-            if !preset_path.exists() {
-                println!("could not determine build layout! Please make sure that the path given via --build exists!");
-                std::process::exit(-1);
-            }
-        }
+        let build_dir = InputPaths::build_dir_from(&given_build_dir);
+        let testcases_root = InputPaths::testcases_dir_from(&given_testcases_root);
+        let preset_path = InputPaths::preset_from(&preset);
+        let build_layout_path = InputPaths::build_layout_from(&build_layout);
 
         let build_layout_file = BuildLayoutFile::from(&build_layout_path, &build_dir);
         if build_layout_file.is_err() {
@@ -260,18 +231,89 @@ impl InputPaths {
         }
         let build_file = build_layout_file.unwrap();
 
+        let root_dir = InputPaths::get_mwtest_root();
         let app_config_path = root_dir.join("tests.json");
-        let app_config = read_app_config_file(&app_config_path, &build_file).unwrap();
+        let app_properties = AppPropertiesFile::open(&app_config_path, &build_file).unwrap();
 
         InputPaths {
-            app_config: app_config,
+            app_properties: app_properties,
             build_file: build_file,
             preset_path: preset_path,
             testcases_root: PathBuf::from(testcases_root),
         }
     }
 
-    fn find_root_dir() -> Option<PathBuf> {
+    fn build_dir_from(given_build_dir: &Option<&str>) -> PathBuf {
+        let build_dir = given_build_dir
+            .map_or_else(|| InputPaths::guess_build_dir(), |d| Some(PathBuf::from(d)));
+        if build_dir.as_ref().map_or(true, |d| !d.exists()) {
+            println!("couldn't find build-dir!");
+            std::process::exit(-1);
+        }
+        build_dir.unwrap()
+    }
+
+    fn testcases_dir_from(given_testcases_root: &Option<&str>) -> PathBuf {
+        let testcases_root = given_testcases_root.map_or_else(
+            || InputPaths::guess_testcases_root(),
+            |d| Some(PathBuf::from(d)),
+        );
+        if testcases_root.as_ref().map_or(true, |d| !d.exists()) {
+            println!("couldn't find testcases-dir!");
+            std::process::exit(-1);
+        }
+        testcases_root.unwrap()
+    }
+
+    fn build_layout_from(build_layout: &str) -> PathBuf {
+        match InputPaths::mwtest_config_path(build_layout) {
+            Some(path) => path,
+            None => {
+                println!("could not determine build layout! Please make sure that the path given via --build exists!");
+                std::process::exit(-1);
+            }
+        }
+    }
+
+    fn preset_from(preset: &str) -> PathBuf {
+        match InputPaths::mwtest_config_path(preset) {
+            Some(path) => path,
+            None => {
+                println!("could not determine preset! Please make sure that the path given via --preset exists!");
+                std::process::exit(-1);
+            }
+        }
+    }
+
+    fn mwtest_config_path(name: &str) -> Option<PathBuf> {
+        let root_dir = InputPaths::get_mwtest_root();
+        let path = root_dir.join(name.to_owned() + ".json");
+        if path.exists() {
+            return Some(path);
+        }
+        let path = PathBuf::from(name);
+        if path.exists() {
+            return Some(path);
+        }
+        None
+    }
+
+    fn get_mwtest_root() -> PathBuf {
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("../../")
+    }
+
+    fn guess_build_dir() -> Option<PathBuf> {
+        InputPaths::find_dev_root().map(|p| p.join("dev"))
+    }
+    fn guess_testcases_root() -> Option<PathBuf> {
+        InputPaths::find_dev_root().map(|p| p.join("testcases"))
+    }
+
+    fn find_dev_root() -> Option<PathBuf> {
         let cwd = std::env::current_dir().unwrap();
         let components = cwd.components();
         let dev_component = std::ffi::OsString::from("dev");
@@ -284,13 +326,6 @@ impl InputPaths {
             let root_components = dev.fold(PathBuf::from(""), |acc, c| acc.join(c));
             Some(root_components)
         }
-    }
-
-    fn guess_build_dir() -> Option<PathBuf> {
-        InputPaths::find_root_dir().map(|p| p.join("dev"))
-    }
-    fn guess_testcases_root() -> Option<PathBuf> {
-        InputPaths::find_root_dir().map(|p| p.join("testcases"))
     }
 }
 
