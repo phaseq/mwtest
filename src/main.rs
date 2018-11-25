@@ -151,7 +151,10 @@ fn main() {
                 .parse()
                 .expect("expected numeric value for rerun-if-failed"),
         };
-        cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
+        let success = cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
+        if !success {
+            std::process::exit(-1)
+        }
     }
 }
 
@@ -193,7 +196,7 @@ fn cmd_run(
     test_apps: &Vec<AppWithTests>,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
-) {
+) -> bool {
     let tests = create_run_commands(&input_paths, &test_apps, &output_paths);
 
     let n_workers = if run_config.parallel {
@@ -202,81 +205,149 @@ fn cmd_run(
         1
     };
     let mut pool = Pool::new(n_workers as u32);
-    pool.scoped(|scoped| {
-        let mut report = report::Report::create(
-            &output_paths.out_dir,
-            input_paths.testcases_root.to_str().unwrap(),
-            run_config.verbose,
-        );
+    pool.scoped(|scope| run_in_scope(scope, &tests, &input_paths, &output_paths, &run_config))
+}
 
-        let mut n = tests.len() * run_config.repeat;
+fn run_in_scope<'scope>(
+    scope: &scoped_threadpool::Scope<'_, 'scope>,
+    tests: &'scope Vec<TestInstanceCreator>,
+    input_paths: &'scope config::InputPaths,
+    output_paths: &'scope OutputPaths,
+    run_config: &'scope RunConfig,
+) -> bool {
+    let mut report = report::Report::create(
+        &output_paths.out_dir,
+        input_paths.testcases_root.to_str().unwrap(),
+        run_config.verbose,
+    );
 
-        let (tx, rx) = mpsc::channel();
-        let (xge_tx, xge_rx) = mpsc::channel::<TestInstance>();
-        if run_config.xge {
-            launch_xge_management_threads(scoped, xge_rx, &tx, &output_paths);
+    let mut n = tests.len() * run_config.repeat;
+
+    let (tx, rx) = mpsc::channel();
+    let (xge_tx, xge_rx) = mpsc::channel::<TestInstance>();
+    if run_config.xge {
+        launch_xge_management_threads(scope, xge_rx, &tx, &output_paths);
+    }
+
+    let mut run_counts = HashMap::new();
+    for test_instance_generator in tests.iter() {
+        run_counts.insert(test_instance_generator.get_uid(), RunCount::new());
+        for _ in 0..run_config.repeat {
+            run_test_instance(
+                test_instance_generator.instantiate(),
+                scope,
+                &xge_tx,
+                &tx,
+                &output_paths,
+                &run_config,
+            );
         }
+    }
 
-        for test_template in &tests {
-            for _ in 0..run_config.repeat {
-                let test_instance = test_template.instantiate();
-                if run_config.xge && test_instance.allow_xge {
-                    xge_tx
-                        .send(test_instance)
-                        .expect("channel did not accept test input!");
-                } else {
-                    let tx = tx.clone();
-                    scoped.execute(move || {
-                        let output = test_instance.run(&output_paths);
-                        tx.send((test_instance, output))
-                            .expect("channel did not accept test result!");
-                    });
-                }
+    let mut i = 0;
+    while i < n {
+        let (test_instance, output) = match rx.recv_timeout(std::time::Duration::from_secs(6 * 60))
+        {
+            Err(mpsc::RecvTimeoutError::Timeout) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("test executor failed!"),
+            Ok(result) => result,
+        };
+        let test_uid = test_instance.get_uid();
+        let run_count = run_counts.get_mut(&test_uid).unwrap();
+        run_count.n_runs += 1;
+        i += 1;
+        if output.exit_code == 0 {
+            run_count.n_successes += 1;
+        } else {
+            if run_count.n_runs <= run_config.rerun_if_failed {
+                n += 1;
+                let test_instance_generator =
+                    tests.iter().find(|t| t.get_uid() == test_uid).unwrap();
+
+                run_test_instance(
+                    test_instance_generator.instantiate(),
+                    scope,
+                    &xge_tx,
+                    &tx,
+                    &output_paths,
+                    &run_config,
+                );
             }
         }
+        report.add(i, n, test_instance, &output);
+    }
 
-        let mut relaunched_tests = HashMap::new();
-        let mut i = 0;
-        while i < n {
-            let (test_instance, output) = rx.iter().next().unwrap();
-            i += 1;
-            if run_config.rerun_if_failed > 0 {
-                let n_relaunched = relaunched_tests
-                    .entry((test_instance.app_name, &test_instance.test_id.id))
-                    .or_insert(0);
-                if *n_relaunched < run_config.rerun_if_failed {
-                    *n_relaunched += 1;
-                    n += 1;
-                    let test_template = tests
-                        .iter()
-                        .find(|t| {
-                            t.app_name == test_instance.app_name
-                                && t.test_id.id == test_instance.test_id.id
-                        }).unwrap();
+    let success = process_run_counts(&run_counts, &run_config);
+    success
+}
 
-                    let test_instance = test_template.instantiate();
-                    if run_config.xge && test_instance.allow_xge {
-                        xge_tx
-                            .send(test_instance)
-                            .expect("channel did not accept test input!");
-                    } else {
-                        let tx = tx.clone();
-                        scoped.execute(move || {
-                            let output = test_instance.run(&output_paths);
-                            tx.send((test_instance, output))
-                                .expect("channel did not accept test result!");
-                        });
-                    }
-                }
-            }
-            report.add(i, n, test_instance, &output);
+fn run_test_instance<'scope>(
+    test_instance: TestInstance<'scope>,
+    scope: &scoped_threadpool::Scope<'_, 'scope>,
+    xge_tx: &mpsc::Sender<TestInstance<'scope>>,
+    tx: &mpsc::Sender<(TestInstance<'scope>, TestCommandResult)>,
+    output_paths: &'scope OutputPaths,
+    run_config: &'scope RunConfig,
+) {
+    if run_config.xge && test_instance.allow_xge {
+        xge_tx
+            .send(test_instance)
+            .expect("channel did not accept test input!");
+    } else {
+        let tx = tx.clone();
+        scope.execute(move || {
+            let output = test_instance.run(&output_paths);
+            tx.send((test_instance, output))
+                .expect("channel did not accept test result!");
+        });
+    }
+}
+
+struct RunCount {
+    n_runs: usize,
+    n_successes: usize,
+}
+impl RunCount {
+    fn new() -> RunCount {
+        RunCount {
+            n_runs: 0,
+            n_successes: 0,
         }
-    });
+    }
+}
+fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunConfig) -> bool {
+    let mut failed: Vec<String> = run_counts
+        .iter()
+        .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
+        .map(|(id, _)| format!("failed: {} --id {}", id.0, id.1))
+        .collect();
+    failed.sort_unstable();
+    let success = failed.is_empty();
+
+    let mut instable: Vec<String> = run_counts
+        .iter()
+        .filter(|(_id, run_counts)| run_counts.n_successes < run_counts.n_runs)
+        .map(|(id, run_counts)| {
+            format!(
+                "instable: {} --id {} (succeeded {} out of {} runs)",
+                id.0, id.1, run_counts.n_runs, run_counts.n_successes
+            )
+        }).collect();
+    instable.sort_unstable();
+
+    for t in failed {
+        println!("{}", t);
+    }
+    for t in instable {
+        println!("{}", t);
+    }
+
+    success
 }
 
 type ResultMessage<'a> = (TestInstance<'a>, TestCommandResult);
 fn launch_xge_management_threads<'pool, 'scope>(
-    scoped: &scoped_threadpool::Scope<'pool, 'scope>,
+    scope: &scoped_threadpool::Scope<'pool, 'scope>,
     xge_rx: mpsc::Receiver<TestInstance<'scope>>,
     tx: &mpsc::Sender<ResultMessage<'scope>>,
     output_paths: &'scope OutputPaths,
@@ -285,7 +356,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
     let (mut xge_writer, mut xge_reader) = xge_lib::xge();
     let issued_commands: Arc<Mutex<Vec<TestInstance>>> = Arc::new(Mutex::new(Vec::new()));
     let issued_commands2 = issued_commands.clone();
-    scoped.execute(move || {
+    scope.execute(move || {
         for test_instance in xge_rx.iter() {
             let request = {
                 let mut locked_issued_commands = issued_commands.lock().unwrap();
@@ -308,7 +379,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
             .done()
             .expect("error in xge.done(): could not close socket");
     });
-    scoped.execute(move || {
+    scope.execute(move || {
         for stream_result in xge_reader.results() {
             let result = TestCommandResult {
                 exit_code: stream_result.exit_code,
@@ -352,6 +423,11 @@ struct GroupWithTests {
 pub struct TestId {
     pub id: String,
     pub rel_path: RelTestLocation,
+}
+impl std::hash::Hash for TestId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 #[derive(Debug, Clone)]
 pub enum RelTestLocation {
@@ -481,6 +557,8 @@ fn test_command_generator(
     }
 }
 
+type TestUid<'a> = (&'a str, &'a str);
+
 struct TestInstanceCreator<'a> {
     app_name: &'a str,
     test_id: &'a TestId,
@@ -495,6 +573,9 @@ impl<'a> TestInstanceCreator<'a> {
             allow_xge: self.allow_xge,
             command: (self.command_generator)(),
         }
+    }
+    fn get_uid(&self) -> TestUid<'a> {
+        (self.app_name, &self.test_id.id)
     }
 }
 #[derive(Debug, Clone)]
@@ -581,6 +662,10 @@ impl<'a> TestInstance<'a> {
             }
         }
         Ok(())
+    }
+
+    fn get_uid(&self) -> TestUid<'a> {
+        (self.app_name, &self.test_id.id)
     }
 }
 
