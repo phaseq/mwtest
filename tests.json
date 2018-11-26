@@ -58,5 +58,35 @@
       "-memoryLimit:4096",
       "-iAmDebugging:1"
     ]
+  },
+  "mxp": {
+    "command_template": [
+      "{{MXPTest}}",
+      "newmode",
+      "--input-dir",
+      "{{input}}",
+      "--output-dir",
+      "{{tmp_path}}"
+    ]
+  },
+  "cuttercompensation": {
+    "command_template": [
+      "{{mwCutterCompensationTest}}",
+      "newmode",
+      "--input-dir",
+      "{{input}}",
+      "--output-dir",
+      "{{tmp_path}}"
+    ]
+  },
+  "collisionchecker": {
+    "command_template": [
+      "{{CollisionCheckerTest}}",
+      "newmode",
+      "--input-dir",
+      "{{input}}",
+      "--output-dir",
+      "{{tmp_path}}"
+    ]
   }
 }

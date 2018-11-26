@@ -23,6 +23,18 @@
     "eo": {
       "solution": "5axis/build_all_VS2013.sln",
       "project": "exactoutputBT"
+    },
+    "mxp": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "MXPTest"
+    },
+    "cuttercompensation": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "mwCutterCompensationTest"
+    },
+    "collisionchecker": {
+      "solution": "5axis/build_all_VS2013.sln",
+      "project": "CollisionCheckerTest"
     }
   },
   "exes": {
@@ -36,6 +48,9 @@
     "{{mwCNCSimTest}}": "CNCSim/mwCNCSimTest/bin/Release/mwCNCSimTest.exe",
     "{{mwCNCSimTestCWD}}": "5axis/customer/quickstart",
     "{{exactoutput}}": "5axis/test/exactoutputBT/ReleaseUnicode/exactoutputBT.exe",
-    "{{exactoutputCWD}}": "5axis/customer/quickstart"
+    "{{exactoutputCWD}}": "5axis/customer/quickstart",
+    "{{MXPTest}}": "5axis/test/MXPTest/ReleaseUnicode/MXPTest.exe",
+    "{{mwCutterCompensationTest}}": "libraries/mwCutterCompensationTest/ReleaseUnicode/mwCutterCompensationTest.exe",
+    "{{CollisionCheckerTest}}": "5axis/test/CollisionCheckerTest/ReleaseUnicode/CollisionCheckerTest.exe"
   }
 }
