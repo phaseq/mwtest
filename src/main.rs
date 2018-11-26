@@ -104,7 +104,16 @@ fn main() {
         std::process::exit(0);
     }
 
-    let test_group_file = config::TestGroupFile::open(&input_paths.preset_path).unwrap();
+    let test_group_file = match config::TestGroupFile::open(&input_paths.preset_path) {
+        Ok(file) => file,
+        Err(e) => {
+            println!(
+                "ERROR: failed to parse preset file at {:?}: {}",
+                &input_paths.preset_path, e
+            );
+            std::process::exit(-1);
+        }
+    };
 
     if let Some(matches) = matches.subcommand_matches("list") {
         let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
@@ -615,7 +624,7 @@ impl<'a> TestInstance<'a> {
             .output();
         if maybe_output.is_err() {
             println!(
-                "failed to run test command!\n  command: {:?}\n  cwd: {}  \n  error: {}\n\nDid you forget to build?",
+                "ERROR: failed to run test command!\n  command: {:?}\n  cwd: {}  \n  error: {}\n\nDid you forget to build?",
                 &self.command.command,
                 &self.command.cwd,
                 maybe_output.err().unwrap()
@@ -715,7 +724,7 @@ fn test_apps_from_args(
             let config = input_paths.app_properties.get(app_name);
             if config.is_none() {
                 let app_names = input_paths.app_properties.app_names();
-                println!("\"{}\" not found: must be one of {:?}", app_name, app_names);
+                println!("ERROR: \"{}\" not found: must be one of {:?}", app_name, app_names);
                 std::process::exit(-1);
             }
             let empty_vec = vec![];

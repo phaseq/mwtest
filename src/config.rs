@@ -272,7 +272,7 @@ impl InputPaths {
         match BuildLayoutFile::from(&path, &build_dir) {
             Ok(content) => content,
             Err(e) => {
-                println!("failed to load build file {:?}:\n{}", path, e);
+                println!("ERROR: failed to load build file {:?}:\n{}", path, e);
                 std::process::exit(-1);
             }
         }
@@ -282,7 +282,7 @@ impl InputPaths {
         match InputPaths::mwtest_config_path(preset) {
             Some(path) => path,
             None => {
-                println!("could not determine preset! Please make sure that the path given via --preset exists!");
+                println!("ERROR: could not determine preset! Please make sure that the path given via --preset exists!");
                 std::process::exit(-1);
             }
         }
