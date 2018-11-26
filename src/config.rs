@@ -210,7 +210,7 @@ pub struct InputPaths {
 }
 impl InputPaths {
     pub fn get_registered_tests() -> Vec<String> {
-        let path = InputPaths::get_mwtest_root().join("tests.json");
+        let path = InputPaths::mwtest_config_root().join("tests.json");
         let file = File::open(path).unwrap();
         let content: AppPropertiesFile = serde_json::from_reader(file).unwrap();
         content.app_names()
@@ -227,7 +227,7 @@ impl InputPaths {
         let build_layout_file = InputPaths::build_layout_from(&build_layout, &build_dir);
         let preset_path = InputPaths::preset_from(&preset);
 
-        let root_dir = InputPaths::get_mwtest_root();
+        let root_dir = InputPaths::mwtest_config_root();
         let app_config_path = root_dir.join("tests.json");
         let app_properties = AppPropertiesFile::open(&app_config_path, &build_layout_file).unwrap();
 
@@ -289,7 +289,7 @@ impl InputPaths {
     }
 
     fn mwtest_config_path(name: &str) -> Option<PathBuf> {
-        let root_dir = InputPaths::get_mwtest_root();
+        let root_dir = InputPaths::mwtest_config_root();
         let path = root_dir.join(name.to_owned() + ".json");
         if path.exists() {
             return Some(path);
@@ -301,17 +301,17 @@ impl InputPaths {
         None
     }
 
-    fn get_mwtest_root() -> PathBuf {
+    fn mwtest_config_root() -> PathBuf {
         let root = std::env::current_exe()
             .unwrap()
             .parent()
             .unwrap()
             .to_path_buf();
-        if root.join("tests.json").exists() {
-            root
+        if root.join("config/tests.json").exists() {
+            root.join("config")
         } else {
             // for "cargo run"
-            root.join("../../")
+            root.join("../../config")
         }
     }
 
