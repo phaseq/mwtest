@@ -60,5 +60,27 @@
       "find_glob": "5axis/binfiles/**/*.bin",
       "id_pattern": "5axis/binfiles/(.*).bin"
     }
+  ],
+  "mxp": [
+    {
+      "find_glob": "5axis/MXPfiles/*.mxp",
+      "id_pattern": "5axis/MXPfiles/(.*).mxp"
+    }
+  ],
+  "cuttercompensation": [
+    {
+      "find_glob": "5axis/CutterCompensationTests/*.cc",
+      "id_pattern": "5axis/CutterCompensationTests/(.*).cc"
+    }
+  ],
+  "collisionchecker": [
+    {
+      "find_glob": "CollisionChecker/CollisionCheckerTestCases/smoke/**/*.col",
+      "id_pattern": "CollisionChecker/CollisionCheckerTestCases/(.*).col"
+    },
+    {
+      "find_glob": "CollisionChecker/CollisionCheckerTestCases/LargeTestInputPools/**/*.col",
+      "id_pattern": "CollisionChecker/CollisionCheckerTestCases/(.*).col"
+    }
   ]
 }

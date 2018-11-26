@@ -158,7 +158,7 @@ fn main() {
                 .value_of("RERUN_IF_FAILED")
                 .unwrap()
                 .parse()
-                .expect("expected numeric value for rerun-if-failed"),
+                .expect("expected numeric value for repeat-if-failed"),
         };
         let success = cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
         if !success {

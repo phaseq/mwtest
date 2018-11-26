@@ -33,7 +33,7 @@
       "--output-dir",
       "{{tmp_path}}",
       "--tmp-dir",
-      "{{tmp_path}}",
+      "{{tmp_path}}/__tmp",
       "--stand-alone",
       "1"
     ],
