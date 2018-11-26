@@ -165,7 +165,7 @@ impl CliLogger {
         line.truncate(width);
         print!("{:width$}", line, width = width);
         if result.exit_code != 0 || self.verbose {
-            println!("\n{}\n", &result.stdout);
+            println!("\n{}\n", &result.stdout.trim());
         }
         std::io::stdout().flush().unwrap();
     }

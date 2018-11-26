@@ -201,6 +201,8 @@ fn cmd_run(
 
     let n_workers = if run_config.parallel {
         num_cpus::get()
+    } else if run_config.xge {
+        2
     } else {
         1
     };

@@ -299,11 +299,17 @@ impl InputPaths {
     }
 
     fn get_mwtest_root() -> PathBuf {
-        std::env::current_exe()
+        let root = std::env::current_exe()
             .unwrap()
             .parent()
             .unwrap()
-            .join("../../")
+            .to_path_buf();
+        if root.join("tests.json").exists() {
+            root
+        } else {
+            // for "cargo run"
+            root.join("../../")
+        }
     }
 
     fn guess_build_dir() -> Option<PathBuf> {
