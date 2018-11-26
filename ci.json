@@ -8,7 +8,7 @@
   "verifierUnit": [
     {
       "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*-*Nightly*:*RunLocal*"],
-      "id_pattern": "(.*)",
+      "id_pattern": "(.*)"
     },
     {
       "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*RunLocal*-*Nightly*"],

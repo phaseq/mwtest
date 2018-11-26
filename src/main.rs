@@ -84,7 +84,7 @@ fn main() {
                     .takes_value(true)
                     .default_value("1"))
                 .arg(Arg::with_name("RERUN_IF_FAILED")
-                    .long("rerun-if-failed")
+                    .long("repeat-if-failed")
                     .takes_value(true)
                     .default_value("0"))
         ).get_matches();
@@ -319,21 +319,27 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
     let mut failed: Vec<String> = run_counts
         .iter()
         .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
-        .map(|(id, _)| format!("failed: {} --id {}", id.0, id.1))
-        .collect();
+        .map(|(id, run_counts)| {
+            format!(
+                "failed: {} --id {} (succeeded {} out of {} runs)",
+                id.0, id.1, run_counts.n_successes, run_counts.n_runs
+            )
+        }).collect();
     failed.sort_unstable();
-    let success = failed.is_empty();
+    let all_succeeded = failed.is_empty();
 
     let mut instable: Vec<String> = run_counts
         .iter()
-        .filter(|(_id, run_counts)| run_counts.n_successes < run_counts.n_runs)
-        .map(|(id, run_counts)| {
+        .filter(|(_id, run_counts)| {
+            run_counts.n_successes > 0 && run_counts.n_successes < run_counts.n_runs
+        }).map(|(id, run_counts)| {
             format!(
                 "instable: {} --id {} (succeeded {} out of {} runs)",
-                id.0, id.1, run_counts.n_runs, run_counts.n_successes
+                id.0, id.1, run_counts.n_successes, run_counts.n_runs
             )
         }).collect();
     instable.sort_unstable();
+    let none_instable = instable.is_empty();
 
     for t in failed {
         println!("{}", t);
@@ -342,7 +348,11 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
         println!("{}", t);
     }
 
-    success
+    if all_succeeded && none_instable {
+        println!("All tests succeeded!");
+    }
+
+    all_succeeded
 }
 
 type ResultMessage<'a> = (TestInstance<'a>, TestCommandResult);
