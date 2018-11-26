@@ -545,7 +545,13 @@ fn test_id_to_input(
         )
     } else {
         // gtest case
-        (test_id.id.clone(), app_properties.cwd.clone().unwrap())
+        (
+            test_id.id.clone(),
+            app_properties
+                .cwd
+                .clone()
+                .expect("You need to specify a CWD for gtests (see preset)."),
+        )
     }
 }
 
@@ -622,16 +628,16 @@ impl<'a> TestInstance<'a> {
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
             .output();
-        if maybe_output.is_err() {
-            println!(
-                "ERROR: failed to run test command!\n  command: {:?}\n  cwd: {}  \n  error: {}\n\nDid you forget to build?",
-                &self.command.command,
-                &self.command.cwd,
-                maybe_output.err().unwrap()
-            );
-            std::process::exit(-1);
-        }
-        let output = maybe_output.unwrap();
+        let output = match maybe_output {
+            Ok(output) => output,
+            Err(e) => {
+                println!(
+                    "ERROR: failed to run test command!\n  command: {:?}\n  cwd: {}  \n  error: {}\n\nDid you forget to build?",
+                    &self.command.command, &self.command.cwd, e
+                );
+                std::process::exit(-1);
+            }
+        };
         let exit_code = output.status.code().unwrap_or(-7787);
         let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
         let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
@@ -721,18 +727,20 @@ fn test_apps_from_args(
         .values_of("test_app")
         .unwrap()
         .map(|app_name| {
-            let config = input_paths.app_properties.get(app_name);
-            if config.is_none() {
-                let app_names = input_paths.app_properties.app_names();
-                println!("ERROR: \"{}\" not found: must be one of {:?}", app_name, app_names);
-                std::process::exit(-1);
-            }
+            let config = match input_paths.app_properties.get(app_name) {
+                Some(config) => config,
+                None => {
+                    let app_names = input_paths.app_properties.app_names();
+                    println!("ERROR: \"{}\" not found: must be one of {:?}", app_name, app_names);
+                    std::process::exit(-1);
+                }
+            };
             let empty_vec = vec![];
             let test_groups = test_group_file.get(app_name).unwrap_or(&empty_vec);
             AppWithTests {
                 name: app_name.to_string(),
-                config: config.unwrap().clone(),
-                tests: populate_test_groups(config.unwrap(), input_paths, &test_groups, &id_filter),
+                config: config.clone(),
+                tests: populate_test_groups(config, input_paths, &test_groups, &id_filter),
             }
         }).filter(|app_with_tests| !app_with_tests.tests.is_empty())
         .collect();
