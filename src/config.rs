@@ -79,6 +79,20 @@ pub struct BuildDependency {
     pub project: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TestGroupFile(HashMap<String, Vec<TestGroup>>);
+impl TestGroupFile {
+    pub fn open(path: &Path) -> Result<TestGroupFile, Box<std::error::Error>> {
+        let file = File::open(path)?;
+        let content = serde_json::from_reader(file)?;
+        Ok(content)
+    }
+
+    pub fn get(&self, app_name: &str) -> Option<&Vec<TestGroup>> {
+        self.0.get(app_name)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestGroup {
     pub find_glob: Option<String>,
@@ -187,13 +201,6 @@ fn true_value() -> bool {
     true
 }
 
-pub type TestGroupFile = HashMap<String, Vec<TestGroup>>;
-pub fn read_test_group_file(path: &Path) -> Result<TestGroupFile, Box<std::error::Error>> {
-    let file = File::open(path)?;
-    let content = serde_json::from_reader(file)?;
-    Ok(content)
-}
-
 #[derive(Debug)]
 pub struct InputPaths {
     pub app_properties: AppPropertiesFile,
@@ -217,27 +224,16 @@ impl InputPaths {
     ) -> InputPaths {
         let build_dir = InputPaths::build_dir_from(&given_build_dir);
         let testcases_root = InputPaths::testcases_dir_from(&given_testcases_root);
+        let build_layout_file = InputPaths::build_layout_from(&build_layout, &build_dir);
         let preset_path = InputPaths::preset_from(&preset);
-        let build_layout_path = InputPaths::build_layout_from(&build_layout);
-
-        let build_layout_file = BuildLayoutFile::from(&build_layout_path, &build_dir);
-        if build_layout_file.is_err() {
-            println!(
-                "failed to load build file {:?}:\n{:?}",
-                build_layout_path,
-                build_layout_file.unwrap_err()
-            );
-            std::process::exit(-1);
-        }
-        let build_file = build_layout_file.unwrap();
 
         let root_dir = InputPaths::get_mwtest_root();
         let app_config_path = root_dir.join("tests.json");
-        let app_properties = AppPropertiesFile::open(&app_config_path, &build_file).unwrap();
+        let app_properties = AppPropertiesFile::open(&app_config_path, &build_layout_file).unwrap();
 
         InputPaths {
             app_properties: app_properties,
-            build_file: build_file,
+            build_file: build_layout_file,
             preset_path: preset_path,
             testcases_root: PathBuf::from(testcases_root),
         }
@@ -265,11 +261,18 @@ impl InputPaths {
         testcases_root.unwrap()
     }
 
-    fn build_layout_from(build_layout: &str) -> PathBuf {
-        match InputPaths::mwtest_config_path(build_layout) {
+    fn build_layout_from(build_layout: &str, build_dir: &Path) -> BuildLayoutFile {
+        let path = match InputPaths::mwtest_config_path(build_layout) {
             Some(path) => path,
             None => {
                 println!("could not determine build layout! Please make sure that the path given via --build exists!");
+                std::process::exit(-1);
+            }
+        };
+        match BuildLayoutFile::from(&path, &build_dir) {
+            Ok(content) => content,
+            Err(e) => {
+                println!("failed to load build file {:?}:\n{}", path, e);
                 std::process::exit(-1);
             }
         }

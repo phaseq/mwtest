@@ -104,7 +104,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    let test_group_file = config::read_test_group_file(&input_paths.preset_path).unwrap();
+    let test_group_file = config::TestGroupFile::open(&input_paths.preset_path).unwrap();
 
     if let Some(matches) = matches.subcommand_matches("list") {
         let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
@@ -122,7 +122,7 @@ fn main() {
         if Path::exists(&output_paths.out_dir) {
             if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
                 println!(
-                    "ERROR: can't reset the output directory: {:?}\n. It doesn't look like it \
+                    "ERROR: can't reset the output directory: {:?}.\n It doesn't look like it \
                      was created by mwtest. Please select another one or delete it manually.",
                     &output_paths.out_dir
                 );
@@ -279,6 +279,8 @@ fn run_in_scope<'scope>(
         report.add(i, n, test_instance, &output);
     }
 
+    drop(report);
+
     let success = process_run_counts(&run_counts, &run_config);
     success
 }
@@ -322,10 +324,14 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
         .iter()
         .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
         .map(|(id, run_counts)| {
-            format!(
-                "failed: {} --id {} (succeeded {} out of {} runs)",
-                id.0, id.1, run_counts.n_successes, run_counts.n_runs
-            )
+            if run_counts.n_runs > 1 {
+                format!(
+                    "failed: {} --id {} (succeeded {} out of {} runs)",
+                    id.0, id.1, run_counts.n_successes, run_counts.n_runs
+                )
+            } else {
+                format!("failed: {} --id {}", id.0, id.1)
+            }
         }).collect();
     failed.sort_unstable();
     let all_succeeded = failed.is_empty();
@@ -335,10 +341,14 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
         .filter(|(_id, run_counts)| {
             run_counts.n_successes > 0 && run_counts.n_successes < run_counts.n_runs
         }).map(|(id, run_counts)| {
-            format!(
-                "instable: {} --id {} (succeeded {} out of {} runs)",
-                id.0, id.1, run_counts.n_successes, run_counts.n_runs
-            )
+            if run_counts.n_runs > 1 {
+                format!(
+                    "instable: {} --id {} (succeeded {} out of {} runs)",
+                    id.0, id.1, run_counts.n_successes, run_counts.n_runs
+                )
+            } else {
+                format!("instable: {} --id {}", id.0, id.1)
+            }
         }).collect();
     instable.sort_unstable();
     let none_instable = instable.is_empty();
@@ -687,9 +697,13 @@ fn test_apps_from_args(
     test_group_file: &config::TestGroupFile,
 ) -> Vec<AppWithTests> {
     let filter_tokens: Option<Vec<&str>> = args.values_of("filter").map(|v| v.collect());
+    let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
     let id_filter = |input: &str| {
+        let input = normalize(input);
         if let Some(filters) = &filter_tokens {
-            filters.iter().any(|f| input.contains(f))
+            filters
+                .iter()
+                .any(|f| input.contains(normalize(f).as_str()))
         } else {
             true
         }

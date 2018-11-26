@@ -23,9 +23,8 @@ def view_contours_rhino(rhino_path, reference, location):
     subprocess.Popen([rhino_path, rhino_tmp])
 
 
-def view_wp_vas(vas_path, reference, location):
-    subprocess.Popen([vas_path, '/file', reference])
-    subprocess.Popen([vas_path, '/file', location])
+def view_wp_vas(vas_path, file):
+    subprocess.Popen([vas_path, '/file', file])
 
 
 def view_stl_rhino(rhino_path, reference, location):
@@ -46,6 +45,10 @@ def view_stl_vas(vas_path, reference, location):
     f.write("STOCKFILE %s;\nTARGETFILE %s;" % (reference, location))
     f.close()
     subprocess.Popen([vas_path, nc_tmp])
+
+
+def view_stl_viscam(viscam_path, file):
+    subprocess.Popen([viscam_path, file])
 
 
 def view_diff_tortoise(tortoise_path, reference, location):
@@ -88,14 +91,18 @@ def view(reference, location, comparers, dialog):
     if type == 'verifier-wp':
         choices.append(('1', 'VAS comparison',
                         lambda: subprocess.Popen([comparers['vas'], '/compare', location, '/file', reference])))
-        choices.append(('2', 'open both in VAS',
-                        lambda: view_wp_vas(comparers['vas'], reference, location)))
+        choices.append(('2', 'open different in VAS',
+                        lambda: view_wp_vas(comparers['vas'], location)))
+        choices.append(('3', 'open reference in VAS',
+                        lambda: view_wp_vas(comparers['vas'], reference)))
     elif type == 'rhino-text':
         choices.append(('1', 'Rhino comparison', lambda: view_contours_rhino(comparers['rhino'], reference, location)))
         choices.append(('2', 'Tortoise', lambda: view_diff_tortoise(comparers['tortoiseDiff'], reference, location)))
     elif type == 'stl':
-        choices.append(('1', 'Rhino comparison', lambda: view_stl_rhino(comparers['rhino'], reference, location)))
-        choices.append(('2', 'VAS G&E comparison', lambda: view_stl_vas(comparers['vas'], reference, location)))
+        choices.append(('1', 'Rhino', lambda: view_stl_rhino(comparers['rhino'], reference, location)))
+        choices.append(('2', 'VAS G&E', lambda: view_stl_vas(comparers['vas'], reference, location)))
+        choices.append(('3', 'VisCAM (different)', lambda: view_stl_viscam(comparers['viscam'], location)))
+        choices.append(('4', 'VisCAM (reference)', lambda: view_stl_viscam(comparers['viscam'], reference)))
     elif type == 'text':
         choices.append(('1', 'Tortoise', lambda: view_diff_tortoise(comparers['tortoiseDiff'], reference, location)))
     elif type == 'unknown':
@@ -182,7 +189,7 @@ class Dialog(Tkinter.Frame):
                     button_artifact.pack(side='left')
                     self.buttons.append(button_reference)
 
-                if os.path.exists(artifact["artifact"]):
+                if os.path.exists(artifact["artifact"]) and os.path.exists(artifact["reference"]):
                     options = view(artifact["reference"], artifact["artifact"], self.comparers, self)
                     button_frame = Tkinter.Frame(self.info_frame, padx=5, pady=5)
                     button_frame.pack(fill='x')
@@ -230,7 +237,6 @@ def load_report(file_name):
                             "reference": os.path.join(reference_path, rel_dirpath, f),
                             "artifact": os.path.join(artifact_path, rel_dirpath, f)
                         })
-            print artifacts
             test_result = {
                 "app": test_name,
                 "name": test.attributes['name'].value,
