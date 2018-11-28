@@ -642,48 +642,6 @@ impl<'a> TestInstance<'a> {
     }
 
     fn cleanup(&self, _equal: bool, _output_paths: &OutputPaths) -> std::io::Result<()> {
-        /*match &self.test_id.rel_path {
-            RelTestLocation::None => {}
-            RelTestLocation::Dir(rel_path) => {
-                let tmp_dir = &self.command.tmp_dir.as_ref().unwrap();
-                //println!("reading {:?}", tmp_dir);
-                if std::fs::read_dir(tmp_dir).unwrap().next().is_some() {
-                    let subdir = if equal { "equal" } else { "different" };
-                    let new_name = output_paths
-                        .out_dir
-                        .clone()
-                        .join(subdir)
-                        .join(rel_path.clone());
-                    {
-                        let parent_dir = new_name.parent();
-                        //println!("writing {:?} to {:?}", tmp_dir, new_name);
-                        std::fs::create_dir_all(parent_dir.unwrap())?;
-                    }
-                    std::fs::rename(tmp_dir, new_name)?;
-                } else {
-                    std::fs::remove_dir(&tmp_dir)?;
-                }
-            }
-            RelTestLocation::File(rel_path) => {
-                let tmp_dir = &self.command.tmp_dir.as_ref().unwrap();
-                let subdir = if equal { "equal" } else { "different" };
-                for entry in std::fs::read_dir(tmp_dir)? {
-                    let entry = entry?;
-                    let new_name = output_paths
-                        .out_dir
-                        .clone()
-                        .join(subdir)
-                        .join(rel_path.clone());
-                    {
-                        let parent_dir = new_name.parent();
-                        //println!("writing {:?} to {:?}", entry, new_name);
-                        std::fs::create_dir_all(parent_dir.unwrap())?;
-                    }
-                    std::fs::rename(entry.path(), new_name)?;
-                }
-                std::fs::remove_dir(&tmp_dir)?;
-            }
-        }*/
         if let Some(tmp_path) = &self.command.tmp_path {
             if tmp_path.is_dir() && std::fs::read_dir(tmp_path).unwrap().next().is_none() {
                 std::fs::remove_dir(&tmp_path)?;
