@@ -101,25 +101,20 @@ impl<'a> XmlReport<'a> {
                         htmlescape::encode_minimal(&command_result.stdout)
                     ).as_bytes(),
                 )?;
-                if let ::TmpPath::None = &test_instance.command.tmp_path {
-                } else {
-                    let tmp_dir = match &test_instance.command.tmp_path {
-                        ::TmpPath::File(tmp_dir) => tmp_dir,
-                        ::TmpPath::Dir(tmp_dir) => tmp_dir,
-                        _ => panic!(),
-                    };
+                if let Some(tmp_dir) = &test_instance.command.tmp_path {
                     if PathBuf::from(tmp_dir).exists() {
                         let rel_tmp_dir = PathBuf::from(tmp_dir);
                         let rel_tmp_dir = rel_tmp_dir
                             .strip_prefix(self.file_path.parent().unwrap())
                             .unwrap();
                         let rel_tmp_dir = rel_tmp_dir.to_string_lossy().into_owned();
-                        let rel_reference_path = match &test_instance.test_id.rel_path {
-                            ::RelTestLocation::Dir(p) => p,
-                            ::RelTestLocation::File(p) => p,
-                            _ => panic!(""),
-                        }.to_string_lossy()
-                        .into_owned();
+                        let rel_reference_path = &test_instance
+                            .test_id
+                            .rel_path
+                            .as_ref()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned();
                         out.write(
                             format!(
                                 "<artifact reference=\"{}\" location=\"{}\" />",

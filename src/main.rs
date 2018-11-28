@@ -453,18 +453,12 @@ struct GroupWithTests {
 #[derive(Debug, Clone)]
 pub struct TestId {
     pub id: String,
-    pub rel_path: RelTestLocation,
+    pub rel_path: Option<PathBuf>,
 }
 impl std::hash::Hash for TestId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
-}
-#[derive(Debug, Clone)]
-pub enum RelTestLocation {
-    None,
-    File(PathBuf),
-    Dir(PathBuf),
 }
 
 #[derive(Debug)]
@@ -477,15 +471,9 @@ struct OutputPaths {
 pub struct TestCommand {
     command: Vec<String>,
     cwd: String,
-    pub tmp_path: TmpPath,
+    pub tmp_path: Option<PathBuf>,
 }
 type CommandGenerator = Fn() -> TestCommand;
-#[derive(Debug, Clone)]
-pub enum TmpPath {
-    None,
-    File(String),
-    Dir(String),
-}
 
 #[derive(Debug, Clone)]
 pub struct TestCommandResult {
@@ -526,23 +514,26 @@ fn test_id_to_input(
     input_paths: &config::InputPaths,
     app_properties: &config::AppProperties,
 ) -> (String, String) {
-    if let RelTestLocation::File(rel_path) = &test_id.rel_path {
+    if let Some(rel_path) = &test_id.rel_path {
         let full_path = input_paths.testcases_root.join(&rel_path);
-        if let Some(cwd) = &app_properties.cwd {
-            // cncsim case
-            (full_path.to_string_lossy().into_owned(), cwd.clone())
+        if full_path.is_dir() {
+            // machsim case
+            let full_path = input_paths.testcases_root.join(&rel_path);
+            (
+                full_path.to_string_lossy().into_owned(),
+                full_path.to_string_lossy().into_owned(),
+            )
         } else {
-            // verifier case
-            let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
-            let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
-            (file_name, parent_dir)
+            if let Some(cwd) = &app_properties.cwd {
+                // cncsim case
+                (full_path.to_string_lossy().into_owned(), cwd.clone())
+            } else {
+                // verifier case
+                let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
+                let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
+                (file_name, parent_dir)
+            }
         }
-    } else if let RelTestLocation::Dir(rel_path) = &test_id.rel_path {
-        let full_path = input_paths.testcases_root.join(&rel_path);
-        (
-            full_path.to_string_lossy().into_owned(),
-            full_path.to_string_lossy().into_owned(),
-        )
     } else {
         // gtest case
         (
@@ -571,7 +562,7 @@ fn test_command_generator(
             TestCommand {
                 command: command.0.clone(),
                 cwd: cwd.to_string(),
-                tmp_path: TmpPath::File(tmp_path),
+                tmp_path: Some(tmp_dir),
             }
         })
     } else if command.has_pattern("{{tmp_file}}") {
@@ -582,14 +573,14 @@ fn test_command_generator(
             TestCommand {
                 command: command.0.clone(),
                 cwd: cwd.to_string(),
-                tmp_path: TmpPath::File(tmp_path),
+                tmp_path: Some(tmp_dir),
             }
         })
     } else {
         Box::new(move || TestCommand {
             command: command.0.clone(),
             cwd: cwd.to_string(),
-            tmp_path: TmpPath::None,
+            tmp_path: None,
         })
     }
 }
@@ -693,8 +684,8 @@ impl<'a> TestInstance<'a> {
                 std::fs::remove_dir(&tmp_dir)?;
             }
         }*/
-        if let TmpPath::Dir(tmp_path) = &self.command.tmp_path {
-            if std::fs::read_dir(tmp_path).unwrap().next().is_none() {
+        if let Some(tmp_path) = &self.command.tmp_path {
+            if tmp_path.is_dir() && std::fs::read_dir(tmp_path).unwrap().next().is_none() {
                 std::fs::remove_dir(&tmp_path)?;
             }
         }
@@ -731,7 +722,10 @@ fn test_apps_from_args(
                 Some(config) => config,
                 None => {
                     let app_names = input_paths.app_properties.app_names();
-                    println!("ERROR: \"{}\" not found: must be one of {:?}", app_name, app_names);
+                    println!(
+                        "ERROR: \"{}\" not found: must be one of {:?}",
+                        app_name, app_names
+                    );
                     std::process::exit(-1);
                 }
             };

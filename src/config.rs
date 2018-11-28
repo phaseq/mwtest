@@ -152,14 +152,9 @@ impl TestGroup {
                         std::process::exit(-1);
                     }
                 };
-                let test_location = if test_config.input_is_dir {
-                    ::RelTestLocation::Dir(PathBuf::from(&rel_path))
-                } else {
-                    ::RelTestLocation::File(PathBuf::from(&rel_path))
-                };
                 ::TestId {
                     id: id.to_string(),
-                    rel_path: test_location,
+                    rel_path: Some(PathBuf::from(&rel_path)),
                 }
             }).collect()
     }
@@ -189,7 +184,7 @@ impl TestGroup {
                 let test_id = group.clone() + line.trim();
                 results.push(::TestId {
                     id: test_id,
-                    rel_path: ::RelTestLocation::None,
+                    rel_path: None,
                 });
             }
         }
