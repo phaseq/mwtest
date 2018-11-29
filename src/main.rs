@@ -11,7 +11,7 @@ extern crate xge_lib;
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
-use clap::{App, Arg, ArgGroup, SubCommand};
+use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
 use config::CommandTemplate;
 use scoped_threadpool::Pool;
 use std::collections::HashMap;
@@ -37,6 +37,7 @@ fn main() {
         .help("select ids that contain one of the given substrings")
         .multiple(true);
     let matches = App::new("MW Test")
+        .setting(AppSettings::SubcommandRequired)
         .arg(Arg::with_name("BUILD_ROOT")
             .long("build-dir")
             .takes_value(true)
@@ -142,8 +143,8 @@ fn main() {
         }
         std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
         println!(
-            "Test artifacts will be written to {:?}.",
-            &output_paths.out_dir
+            "Test artifacts will be written to {}.",
+            output_paths.out_dir.to_str().unwrap()
         );
         let run_config = RunConfig {
             verbose: matches.is_present("verbose"),
@@ -177,11 +178,14 @@ fn cmd_build(test_names: &Vec<&str>, input_paths: &config::InputPaths) {
         (*deps).push(&dep.project);
     }
     for (solution, projects) in dependencies {
+        let projects = projects.join(",");
+        println!("building:\n  solution: {}\n  {}", &solution, &projects);
         Command::new("buildConsole")
             .arg(solution)
             .arg("/build")
+            .arg("/silent")
             .arg("/cfg=ReleaseUnicode|x64")
-            .arg(format!("/prj={}", projects.join(",")))
+            .arg(format!("/prj={}", projects))
             .arg("/openmonitor")
             .spawn()
             .expect("failed to launch buildConsole!")
@@ -211,7 +215,7 @@ fn cmd_run(
     let n_workers = if run_config.parallel {
         num_cpus::get()
     } else if run_config.xge {
-        2
+        2 + num_cpus::get()
     } else {
         1
     };
