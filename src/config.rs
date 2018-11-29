@@ -233,12 +233,8 @@ impl InputPaths {
                 build_layout = None;
             }
         }
-        if let Some(given_build_dir) = given_build_dir {
-            build_dir = Some(PathBuf::from(given_build_dir));
-        }
-        if let Some(given_build_layout) = given_build_layout {
-            build_layout = Some(given_build_layout);
-        }
+        build_dir = given_build_dir.map(|p| PathBuf::from(p)).or(build_dir);
+        build_layout = given_build_layout.or(build_layout);
         if build_dir.is_none() || !build_dir.as_ref().unwrap().exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
             std::process::exit(-1);
@@ -260,12 +256,8 @@ impl InputPaths {
                 preset = "all";
             }
         }
-        if let Some(given_testcases_root) = given_testcases_root {
-            testcases_root = PathBuf::from(given_testcases_root);
-        }
-        if let Some(given_preset) = given_preset {
-            preset = given_preset;
-        }
+        testcases_root = given_testcases_root.map(|p| PathBuf::from(p)).unwrap_or(testcases_root);
+        preset = given_preset.unwrap_or(preset);
         if !testcases_root.exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
             std::process::exit(-1);
