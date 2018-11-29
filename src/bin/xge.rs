@@ -31,6 +31,7 @@ fn accept_commands(stream: TcpStream) {
             .spawn()
             .expect("XGE-Launcher: failed to launch process!");
     }
+    println!("mwt done");
 }
 
 fn report(id: u64, exit_code: i32, output: &str) {

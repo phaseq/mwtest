@@ -384,7 +384,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
     output_paths: &'scope OutputPaths,
 ) {
     let tx = tx.clone();
-    let (mut xge_writer, mut xge_reader) = xge_lib::xge();
+    let (mut xge_writer, xge_reader) = xge_lib::xge();
     let issued_commands: Arc<Mutex<Vec<TestInstance>>> = Arc::new(Mutex::new(Vec::new()));
     let issued_commands2 = issued_commands.clone();
     scope.execute(move || {
@@ -411,7 +411,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
             .expect("error in xge.done(): could not close socket");
     });
     scope.execute(move || {
-        for stream_result in xge_reader.results() {
+        for stream_result in xge_reader {
             let result = TestCommandResult {
                 exit_code: stream_result.exit_code,
                 stdout: stream_result.stdout,

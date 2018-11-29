@@ -21,27 +21,22 @@ pub struct StreamResult {
 pub fn xge() -> (XGEWriter, XGEReader) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let xge_exe = String::from(
-        std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("xge.exe")
-            .to_str()
-            .unwrap(),
-    );
-    let client_process = std::process::Command::new("powershell.exe")
+    let parent = std::env::current_exe().unwrap();
+    let parent = parent.parent().unwrap();
+    let profile_xml = String::from(parent.join("profile.xml").to_str().unwrap());
+    let xge_exe = String::from(parent.join("xge.exe").to_str().unwrap());
+    let client_process = std::process::Command::new("xgConsole")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .arg(format!(
-            r#"& 'xgConsole' @('/command="{}','client','127.0.0.1:{}"','/openmonitor')"#,
-            xge_exe, port
-        )).spawn()
+        .arg(format!("/profile={}", profile_xml))
+        .arg("/openmonitor")
+        .arg(format!("/command={} client 127.0.0.1:{}", xge_exe, port))
+        .spawn()
         .expect("could not spawn XGE client!");
     let client_socket = listener.incoming().next().unwrap();
 
     let writer = std::io::BufWriter::new(client_socket.unwrap());
-    (XGEWriter(writer), XGEReader(client_process))
+    (XGEWriter(writer), XGEReader::from(client_process))
 }
 
 pub struct XGEWriter(std::io::BufWriter<std::net::TcpStream>);
@@ -58,14 +53,31 @@ impl XGEWriter {
     }
 }
 
-pub struct XGEReader(std::process::Child);
+pub struct XGEReader {
+    reader: std::io::BufReader<std::process::ChildStdout>,
+}
 impl XGEReader {
-    pub fn results(&mut self) -> impl Iterator<Item = StreamResult> + '_ {
-        let reader = std::io::BufReader::new(self.0.stdout.as_mut().unwrap());
-        reader
-            .lines()
-            .map(|l| l.unwrap())
-            .filter(|l| l.starts_with("mwt "))
-            .map(|l| serde_json::from_str(&l[4..]).unwrap())
+    fn from(child: std::process::Child) -> XGEReader {
+        XGEReader {
+            reader: std::io::BufReader::new(child.stdout.unwrap()),
+        }
+    }
+}
+impl Iterator for XGEReader {
+    type Item = StreamResult;
+    fn next(&mut self) -> Option<StreamResult> {
+        loop {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(_num_bytes) => {
+                    if line.starts_with("mwt done") {
+                        return None
+                    } else if line.starts_with("mwt ") {
+                        return Some(serde_json::from_str(&line[4..]).unwrap())
+                    }
+                }
+                Err(_) => return None,
+            }
+        }
     }
 }
