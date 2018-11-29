@@ -122,13 +122,6 @@ impl<'a> XmlReport<'a> {
         )?;
         if let Some(tmp_path) = &test_instance.command.tmp_path {
             if tmp_path.exists() {
-                /*let rel_tmp_dir = tmp_path
-                    .strip_prefix(&self.artifacts_root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
-                let rel_reference_path = &rel_path.to_string_lossy().into_owned();*/
-                //
                 let rel_path = test_instance.test_id.rel_path.as_ref().unwrap();
                 let abs_reference_path = self.testcases_root.join(rel_path);
                 let sub_dir = if command_result.exit_code == 0 {
@@ -151,14 +144,7 @@ impl<'a> XmlReport<'a> {
                         self.write_artifact(out, &abs_artifact_path, &abs_artifact_path)?;
                     }
                 }
-                //
-                /*out.write(
-                    format!(
-                        "<artifact reference=\"{}\" location=\"{}\" />",
-                        htmlescape::encode_attribute(&rel_reference_path),
-                        htmlescape::encode_attribute(&rel_tmp_dir)
-                    ).as_bytes(),
-                )?;*/            }
+            }
         }
         out.write(b"</testcase>")?;
         Ok(())

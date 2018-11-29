@@ -214,12 +214,65 @@ impl InputPaths {
     pub fn from(
         given_build_dir: &Option<&str>,
         given_testcases_root: &Option<&str>,
-        build_layout: &str,
-        preset: &str,
+        given_build_layout: &Option<&str>,
+        given_preset: &Option<&str>,
     ) -> InputPaths {
-        let build_dir = InputPaths::build_dir_from(&given_build_dir);
-        let testcases_root = InputPaths::testcases_dir_from(&given_testcases_root);
-        let build_layout_file = InputPaths::build_layout_from(&build_layout, &build_dir);
+        let mut build_dir: Option<PathBuf>;
+        let mut build_layout: Option<&str>;
+        match InputPaths::guess_build_layout() {
+            BuildLayout::Dev(path) => {
+                build_dir = Some(path);
+                build_layout = Some("dev-releaseunicode");
+            }
+            BuildLayout::Quickstart(path) => {
+                build_dir = Some(path);
+                build_layout = Some("quickstart");
+            }
+            BuildLayout::None => {
+                build_dir = None;
+                build_layout = None;
+            }
+        }
+        if let Some(given_build_dir) = given_build_dir {
+            build_dir = Some(PathBuf::from(given_build_dir));
+        }
+        if let Some(given_build_layout) = given_build_layout {
+            build_layout = Some(given_build_layout);
+        }
+        if build_dir.is_none() || !build_dir.as_ref().unwrap().exists() {
+            println!("Could not determine build-dir! You may have to specify it explicitly!");
+            std::process::exit(-1);
+        }
+        if build_layout.is_none() {
+            println!("Could not determine build layout! You may have to specify it explicitly!");
+            std::process::exit(-1);
+        }
+
+        let mut testcases_root: PathBuf;
+        let mut preset: &str;
+        match InputPaths::guess_testcases_layout() {
+            TestcasesLayout::Testcases(path) => {
+                testcases_root = path;
+                preset = "ci";
+            }
+            TestcasesLayout::Custom(path) => {
+                testcases_root = path;
+                preset = "all";
+            }
+        }
+        if let Some(given_testcases_root) = given_testcases_root {
+            testcases_root = PathBuf::from(given_testcases_root);
+        }
+        if let Some(given_preset) = given_preset {
+            preset = given_preset;
+        }
+        if !testcases_root.exists() {
+            println!("Could not determine build-dir! You may have to specify it explicitly!");
+            std::process::exit(-1);
+        }
+
+        let build_layout_file =
+            InputPaths::build_layout_from(&build_layout.unwrap(), &build_dir.unwrap());
         let preset_path = InputPaths::preset_from(&preset);
 
         let root_dir = InputPaths::mwtest_config_root();
@@ -232,28 +285,6 @@ impl InputPaths {
             preset_path: preset_path,
             testcases_root: PathBuf::from(testcases_root),
         }
-    }
-
-    fn build_dir_from(given_build_dir: &Option<&str>) -> PathBuf {
-        let build_dir = given_build_dir
-            .map_or_else(|| InputPaths::guess_build_dir(), |d| Some(PathBuf::from(d)));
-        if build_dir.as_ref().map_or(true, |d| !d.exists()) {
-            println!("couldn't find build-dir!");
-            std::process::exit(-1);
-        }
-        build_dir.unwrap()
-    }
-
-    fn testcases_dir_from(given_testcases_root: &Option<&str>) -> PathBuf {
-        let testcases_root = given_testcases_root.map_or_else(
-            || InputPaths::guess_testcases_root(),
-            |d| Some(PathBuf::from(d)),
-        );
-        if testcases_root.as_ref().map_or(true, |d| !d.exists()) {
-            println!("couldn't find testcases-dir!");
-            std::process::exit(-1);
-        }
-        testcases_root.unwrap()
     }
 
     fn build_layout_from(build_layout: &str, build_dir: &Path) -> BuildLayoutFile {
@@ -310,11 +341,24 @@ impl InputPaths {
         }
     }
 
-    fn guess_build_dir() -> Option<PathBuf> {
-        InputPaths::find_dev_root().map(|p| p.join("dev"))
+    fn guess_build_layout() -> BuildLayout {
+        if let Some(dev_root) = InputPaths::find_dev_root() {
+            BuildLayout::Dev(dev_root.join("dev"))
+        } else if InputPaths::is_quickstart() {
+            BuildLayout::Quickstart(std::env::current_dir().unwrap())
+        } else {
+            BuildLayout::None
+        }
     }
-    fn guess_testcases_root() -> Option<PathBuf> {
-        InputPaths::find_dev_root().map(|p| p.join("testcases"))
+
+    fn guess_testcases_layout() -> TestcasesLayout {
+        if let Some(dev_root) = InputPaths::find_dev_root() {
+            let path = dev_root.join("testcases");
+            if path.exists() {
+                return TestcasesLayout::Testcases(path);
+            }
+        }
+        TestcasesLayout::Custom(std::env::current_dir().unwrap())
     }
 
     fn find_dev_root() -> Option<PathBuf> {
@@ -331,6 +375,22 @@ impl InputPaths {
             Some(root_components)
         }
     }
+
+    fn is_quickstart() -> bool {
+        let cwd = std::env::current_dir().unwrap();
+        cwd.join("mwVerifier.dll").exists() && cwd.join("5axutil.dll").exists()
+    }
+}
+
+enum BuildLayout {
+    Dev(PathBuf),
+    Quickstart(PathBuf),
+    None,
+}
+
+enum TestcasesLayout {
+    Testcases(PathBuf),
+    Custom(PathBuf),
 }
 
 #[derive(Debug, Deserialize, Clone)]

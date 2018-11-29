@@ -52,11 +52,9 @@ fn main() {
         .arg(Arg::with_name("BUILD_LAYOUT")
             .short("b")
             .long("--build")
-            .default_value("dev-releaseunicode")
             .help("specifies the layout of your build (like dev-releaseunicode, quickstart or cmake)"))
         .arg(Arg::with_name("PRESET")
             .long("--preset")
-            .default_value("ci")
             .help("specifies which tests to run (like ci, nightly)"))
         .subcommand(
             SubCommand::with_name("build")
@@ -93,8 +91,8 @@ fn main() {
     let input_paths = config::InputPaths::from(
         &matches.value_of("BUILD_ROOT"),
         &matches.value_of("TESTCASES_ROOT"),
-        &matches.value_of("BUILD_LAYOUT").unwrap(),
-        &matches.value_of("PRESET").unwrap(),
+        &matches.value_of("BUILD_LAYOUT"),
+        &matches.value_of("PRESET"),
     );
 
     if let Some(matches) = matches.subcommand_matches("build") {
