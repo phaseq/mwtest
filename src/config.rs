@@ -223,14 +223,17 @@ impl InputPaths {
             BuildLayout::Dev(path) => {
                 build_dir = Some(path);
                 build_layout = Some("dev-releaseunicode");
+                println!("dev layout");
             }
             BuildLayout::Quickstart(path) => {
                 build_dir = Some(path);
                 build_layout = Some("quickstart");
+                println!("quickstart layout");
             }
             BuildLayout::None => {
                 build_dir = None;
                 build_layout = None;
+                println!("unknown layout");
             }
         }
         build_dir = given_build_dir.map(|p| PathBuf::from(p)).or(build_dir);
@@ -256,7 +259,9 @@ impl InputPaths {
                 preset = "all";
             }
         }
-        testcases_root = given_testcases_root.map(|p| PathBuf::from(p)).unwrap_or(testcases_root);
+        testcases_root = given_testcases_root
+            .map(|p| PathBuf::from(p))
+            .unwrap_or(testcases_root);
         preset = given_preset.unwrap_or(preset);
         if !testcases_root.exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
@@ -357,13 +362,15 @@ impl InputPaths {
         let cwd = std::env::current_dir().unwrap();
         let components = cwd.components();
         let dev_component = std::ffi::OsString::from("dev");
-        let dev = components
-            .into_iter()
-            .take_while(|c| c.as_os_str() != dev_component);
-        if dev.clone().next().is_none() {
+        let mut found = false;
+        let dev: Vec<_> = components.into_iter().take_while(|c| {
+            found = c.as_os_str() == dev_component;
+            !found
+        }).collect();
+        if !found {
             None
         } else {
-            let root_components = dev.fold(PathBuf::from(""), |acc, c| acc.join(c));
+            let root_components = dev.iter().fold(PathBuf::from(""), |acc, c| acc.join(c));
             Some(root_components)
         }
     }
