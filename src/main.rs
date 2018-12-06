@@ -12,7 +12,7 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
-use config::CommandTemplate;
+use crate::config::CommandTemplate;
 use scoped_threadpool::Pool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

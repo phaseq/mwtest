@@ -24,8 +24,8 @@ impl<'a> Report<'a> {
         &mut self,
         i: usize,
         n: usize,
-        test_instance: ::TestInstance<'a>,
-        test_result: &::TestCommandResult,
+        test_instance: crate::TestInstance<'a>,
+        test_result: &crate::TestCommandResult,
     ) {
         self.std_out.add(
             i,
@@ -42,7 +42,7 @@ impl<'a> Report<'a> {
 
 struct XmlReport<'a> {
     file: File,
-    results: HashMap<String, Vec<(::TestInstance<'a>, ::TestCommandResult)>>,
+    results: HashMap<String, Vec<(crate::TestInstance<'a>, crate::TestCommandResult)>>,
     artifacts_root: PathBuf,
     testcases_root: PathBuf,
 }
@@ -60,7 +60,7 @@ impl<'a> XmlReport<'a> {
         })
     }
 
-    fn add(&mut self, test_instance: ::TestInstance<'a>, test_result: &::TestCommandResult) {
+    fn add(&mut self, test_instance: crate::TestInstance<'a>, test_result: &crate::TestCommandResult) {
         match self.results.entry(test_instance.app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
                 e.insert(vec![(test_instance, test_result.clone())]);
@@ -103,8 +103,8 @@ impl<'a> XmlReport<'a> {
     fn write_testcase(
         &self,
         out: &mut BufWriter<&File>,
-        test_instance: &::TestInstance<'a>,
-        command_result: &::TestCommandResult,
+        test_instance: &crate::TestInstance<'a>,
+        command_result: &crate::TestCommandResult,
     ) -> std::io::Result<()> {
         out.write_all(
             format!(
@@ -195,7 +195,7 @@ impl CliLogger {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
-    fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &::TestCommandResult) {
+    fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &crate::TestCommandResult) {
         let ok_or_failed = if result.exit_code == 0 {
             "Ok"
         } else {

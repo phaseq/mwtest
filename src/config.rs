@@ -101,7 +101,7 @@ impl TestGroup {
         &self,
         test_config: &AppProperties,
         input_paths: &InputPaths,
-    ) -> Vec<::TestId> {
+    ) -> Vec<crate::TestId> {
         if self.find_glob.is_some() {
             self.generate_path_inputs(&test_config, &input_paths)
         } else if self.find_gtest.is_some() {
@@ -114,7 +114,7 @@ impl TestGroup {
         &self,
         test_config: &AppProperties,
         input_paths: &InputPaths,
-    ) -> Vec<::TestId> {
+    ) -> Vec<crate::TestId> {
         let re = regex::Regex::new(&self.id_pattern).unwrap();
         let abs_path = input_paths
             .testcases_root
@@ -149,14 +149,14 @@ impl TestGroup {
                         std::process::exit(-1);
                     }
                 };
-                ::TestId {
+                crate::TestId {
                     id: id.to_string(),
                     rel_path: Some(PathBuf::from(&rel_path)),
                 }
             })
             .collect()
     }
-    fn generate_gtest_inputs(&self, input_paths: &InputPaths) -> Vec<::TestId> {
+    fn generate_gtest_inputs(&self, input_paths: &InputPaths) -> Vec<crate::TestId> {
         let filter = self.find_gtest.clone().unwrap();
         let cmd = &input_paths
             .build_file
@@ -180,7 +180,7 @@ impl TestGroup {
                 group = line.trim().to_string();
             } else {
                 let test_id = group.clone() + line.trim();
-                results.push(::TestId {
+                results.push(crate::TestId {
                     id: test_id,
                     rel_path: None,
                 });
