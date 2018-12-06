@@ -97,7 +97,10 @@ fn main() {
 
     if let Some(matches) = matches.subcommand_matches("build") {
         cmd_build(
-            &matches.values_of("test_app").unwrap().collect(),
+            &matches
+                .values_of("test_app")
+                .unwrap()
+                .collect::<Vec<&str>>(),
             &input_paths,
         );
         std::process::exit(0);
@@ -121,7 +124,7 @@ fn main() {
         let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
         let out_dir = matches
             .value_of("OUT_DIR")
-            .map(|v| PathBuf::from(v))
+            .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap().join("test_output"));
         let output_paths = OutputPaths {
             out_dir: out_dir.clone(),
@@ -166,13 +169,13 @@ fn main() {
     }
 }
 
-fn cmd_build(test_names: &Vec<&str>, input_paths: &config::InputPaths) {
+fn cmd_build(test_names: &[&str], input_paths: &config::InputPaths) {
     let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
     for dep in test_names
         .iter()
         .map(|n| &input_paths.build_file.dependencies[*n])
     {
-        let deps = dependencies.entry(&dep.solution).or_insert(vec![]);
+        let deps = dependencies.entry(&dep.solution).or_insert_with(Vec::new);
         (*deps).push(&dep.project);
     }
     for (solution, projects) in dependencies {
@@ -192,7 +195,7 @@ fn cmd_build(test_names: &Vec<&str>, input_paths: &config::InputPaths) {
     }
 }
 
-fn cmd_list(test_apps: &Vec<AppWithTests>) {
+fn cmd_list(test_apps: &[AppWithTests]) {
     for test_app in test_apps {
         for group in &test_app.tests {
             for test_id in &group.test_ids {
@@ -204,7 +207,7 @@ fn cmd_list(test_apps: &Vec<AppWithTests>) {
 
 fn cmd_run(
     input_paths: &config::InputPaths,
-    test_apps: &Vec<AppWithTests>,
+    test_apps: &[AppWithTests],
     output_paths: &OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
@@ -223,7 +226,7 @@ fn cmd_run(
 
 fn run_in_scope<'scope>(
     scope: &scoped_threadpool::Scope<'_, 'scope>,
-    tests: &'scope Vec<TestInstanceCreator>,
+    tests: &'scope [TestInstanceCreator],
     input_paths: &'scope config::InputPaths,
     output_paths: &'scope OutputPaths,
     run_config: &'scope RunConfig,
@@ -271,29 +274,25 @@ fn run_in_scope<'scope>(
         i += 1;
         if output.exit_code == 0 {
             run_count.n_successes += 1;
-        } else {
-            if run_count.n_runs <= run_config.rerun_if_failed {
-                n += 1;
-                let test_instance_generator =
-                    tests.iter().find(|t| t.get_uid() == test_uid).unwrap();
+        } else if run_count.n_runs <= run_config.rerun_if_failed {
+            n += 1;
+            let test_instance_generator = tests.iter().find(|t| t.get_uid() == test_uid).unwrap();
 
-                run_test_instance(
-                    test_instance_generator.instantiate(),
-                    scope,
-                    &xge_tx,
-                    &tx,
-                    &output_paths,
-                    &run_config,
-                );
-            }
+            run_test_instance(
+                test_instance_generator.instantiate(),
+                scope,
+                &xge_tx,
+                &tx,
+                &output_paths,
+                &run_config,
+            );
         }
         report.add(i, n, test_instance, &output);
     }
 
     drop(report);
 
-    let success = process_run_counts(&run_counts, &run_config);
-    success
+    report_and_check_runs(&run_counts, &run_config)
 }
 
 fn run_test_instance<'scope>(
@@ -330,7 +329,7 @@ impl RunCount {
         }
     }
 }
-fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunConfig) -> bool {
+fn report_and_check_runs(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunConfig) -> bool {
     let mut failed: Vec<String> = run_counts
         .iter()
         .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
@@ -343,7 +342,8 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
             } else {
                 format!("failed: {} --id {}", id.0, id.1)
             }
-        }).collect();
+        })
+        .collect();
     failed.sort_unstable();
     let all_succeeded = failed.is_empty();
 
@@ -351,7 +351,8 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
         .iter()
         .filter(|(_id, run_counts)| {
             run_counts.n_successes > 0 && run_counts.n_successes < run_counts.n_runs
-        }).map(|(id, run_counts)| {
+        })
+        .map(|(id, run_counts)| {
             if run_counts.n_runs > 1 {
                 format!(
                     "instable: {} --id {} (succeeded {} out of {} runs)",
@@ -360,7 +361,8 @@ fn process_run_counts(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunC
             } else {
                 format!("instable: {} --id {}", id.0, id.1)
             }
-        }).collect();
+        })
+        .collect();
     instable.sort_unstable();
     let none_instable = instable.is_empty();
 
@@ -485,7 +487,7 @@ pub struct TestCommandResult {
 
 fn create_run_commands<'a>(
     input_paths: &config::InputPaths,
-    test_apps: &'a Vec<AppWithTests>,
+    test_apps: &'a [AppWithTests],
     output_paths: &OutputPaths,
 ) -> Vec<TestInstanceCreator<'a>> {
     let mut tests: Vec<TestInstanceCreator<'a>> = Vec::new();
@@ -495,7 +497,7 @@ fn create_run_commands<'a>(
                 let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.config);
                 let generator = test_command_generator(
                     &app.config.command_template,
-                    input_str,
+                    &input_str,
                     cwd,
                     output_paths.tmp_dir.clone(),
                 );
@@ -525,16 +527,14 @@ fn test_id_to_input(
                 full_path.to_string_lossy().into_owned(),
                 full_path.to_string_lossy().into_owned(),
             )
+        } else if let Some(cwd) = &app_properties.cwd {
+            // cncsim case
+            (full_path.to_string_lossy().into_owned(), cwd.clone())
         } else {
-            if let Some(cwd) = &app_properties.cwd {
-                // cncsim case
-                (full_path.to_string_lossy().into_owned(), cwd.clone())
-            } else {
-                // verifier case
-                let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
-                let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
-                (file_name, parent_dir)
-            }
+            // verifier case
+            let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
+            let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
+            (file_name, parent_dir)
         }
     } else {
         // gtest case
@@ -550,7 +550,7 @@ fn test_id_to_input(
 
 fn test_command_generator(
     command_template: &CommandTemplate,
-    input: String,
+    input: &str,
     cwd: String,
     tmp_root: PathBuf,
 ) -> Box<CommandGenerator> {
@@ -638,7 +638,7 @@ impl<'a> TestInstance<'a> {
         self.cleanup(exit_code == 0, &output_paths)
             .expect("failed to clean up temporary output directory!");
         TestCommandResult {
-            exit_code: exit_code,
+            exit_code,
             stdout: output_str,
         }
     }
@@ -696,7 +696,8 @@ fn test_apps_from_args(
                 config: config.clone(),
                 tests: populate_test_groups(config, input_paths, &test_groups, &id_filter),
             }
-        }).filter(|app_with_tests| !app_with_tests.tests.is_empty())
+        })
+        .filter(|app_with_tests| !app_with_tests.tests.is_empty())
         .collect();
     if apps.is_empty() {
         println!("WARNING: you have not selected any tests.");
@@ -707,7 +708,7 @@ fn test_apps_from_args(
 fn populate_test_groups(
     test_config: &config::AppProperties,
     input_paths: &config::InputPaths,
-    test_groups: &Vec<config::TestGroup>,
+    test_groups: &[config::TestGroup],
     id_filter: &Fn(&str) -> bool,
 ) -> Vec<GroupWithTests> {
     test_groups
@@ -719,5 +720,6 @@ fn populate_test_groups(
                 .into_iter()
                 .filter(|f| id_filter(&f.id))
                 .collect(),
-        }).collect()
+        })
+        .collect()
 }

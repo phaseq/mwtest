@@ -42,8 +42,9 @@ pub fn xge() -> (XGEWriter, XGEReader) {
 pub struct XGEWriter(std::io::BufWriter<std::net::TcpStream>);
 impl XGEWriter {
     pub fn run(&mut self, request: &StreamRequest) -> std::io::Result<()> {
-        self.0.write(serde_json::to_string(&request)?.as_bytes())?;
-        self.0.write(b"\n")?;
+        self.0
+            .write_all(serde_json::to_string(&request)?.as_bytes())?;
+        self.0.write_all(b"\n")?;
         self.0.flush()?;
         Ok(())
     }
@@ -71,9 +72,9 @@ impl Iterator for XGEReader {
             match self.reader.read_line(&mut line) {
                 Ok(_num_bytes) => {
                     if line.starts_with("mwt done") {
-                        return None
+                        return None;
                     } else if line.starts_with("mwt ") {
-                        return Some(serde_json::from_str(&line[4..]).unwrap())
+                        return Some(serde_json::from_str(&line[4..]).unwrap());
                     }
                 }
                 Err(_) => return None,

@@ -12,11 +12,11 @@ impl<'a> Report<'a> {
     pub fn new(artifacts_root: &'a Path, testcases_root: &str, verbose: bool) -> Report<'a> {
         let xml_location = &artifacts_root.join("results.xml");
         let report = Report {
-            std_out: CliLogger { verbose: verbose },
+            std_out: CliLogger { verbose },
             file_logger: FileLogger::new(&artifacts_root),
-            xml_report: XmlReport::new(&xml_location, &artifacts_root, &testcases_root).unwrap(),
+            xml_report: XmlReport::create(&xml_location, &artifacts_root, &testcases_root).unwrap(),
         };
-        report.std_out.new();
+        report.std_out.init();
         report
     }
 
@@ -47,7 +47,7 @@ struct XmlReport<'a> {
     testcases_root: PathBuf,
 }
 impl<'a> XmlReport<'a> {
-    fn new(
+    fn create(
         path: &Path,
         artifacts_root: &Path,
         testcases_root: &str,
@@ -73,28 +73,30 @@ impl<'a> XmlReport<'a> {
 
     fn write(&mut self) -> std::io::Result<()> {
         let mut out = BufWriter::new(&self.file);
-        out.write(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><mwtest>")?;
-        out.write(
+        out.write_all(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><mwtest>")?;
+        out.write_all(
             format!(
                 "<config><reference_root>{}</reference_root></config>",
                 self.testcases_root.to_string_lossy().into_owned()
-            ).as_bytes(),
+            )
+            .as_bytes(),
         )?;
-        out.write(b"<testsuites>")?;
+        out.write_all(b"<testsuites>")?;
         for (test_name, test_results) in &self.results {
-            out.write(
+            out.write_all(
                 format!(
                     "<testsuite name=\"{}\" test=\"{}\">",
                     test_name,
                     test_results.len()
-                ).as_bytes(),
+                )
+                .as_bytes(),
             )?;
             for (test_instance, command_result) in test_results.iter() {
                 self.write_testcase(&mut out, &test_instance, &command_result)?;
             }
-            out.write(b"</testsuite>")?;
+            out.write_all(b"</testsuite>")?;
         }
-        out.write(b"</testsuites></mwtest>")?;
+        out.write_all(b"</testsuites></mwtest>")?;
         Ok(())
     }
 
@@ -104,21 +106,23 @@ impl<'a> XmlReport<'a> {
         test_instance: &::TestInstance<'a>,
         command_result: &::TestCommandResult,
     ) -> std::io::Result<()> {
-        out.write(
+        out.write_all(
             format!(
                 "<testcase name=\"{}\">",
                 htmlescape::encode_attribute(&test_instance.test_id.id)
-            ).as_bytes(),
+            )
+            .as_bytes(),
         )?;
-        out.write(format!("<exit_code>{}</exit_code>", command_result.exit_code).as_bytes())?;
+        out.write_all(format!("<exit_code>{}</exit_code>", command_result.exit_code).as_bytes())?;
         if command_result.exit_code != 0 {
-            out.write(b"<failure />")?;
+            out.write_all(b"<failure />")?;
         }
-        out.write(
+        out.write_all(
             format!(
                 "<system_out>{}</system_out>",
                 htmlescape::encode_minimal(&command_result.stdout)
-            ).as_bytes(),
+            )
+            .as_bytes(),
         )?;
         if let Some(tmp_path) = &test_instance.command.tmp_path {
             if tmp_path.exists() {
@@ -146,7 +150,7 @@ impl<'a> XmlReport<'a> {
                 }
             }
         }
-        out.write(b"</testcase>")?;
+        out.write_all(b"</testcase>")?;
         Ok(())
     }
 
@@ -166,12 +170,13 @@ impl<'a> XmlReport<'a> {
             .unwrap()
             .to_str()
             .unwrap();
-        out.write(
+        out.write_all(
             format!(
                 "<artifact reference=\"{}\" location=\"{}\" />",
                 htmlescape::encode_attribute(&rel_reference_path),
                 htmlescape::encode_attribute(&rel_artifact_path)
-            ).as_bytes(),
+            )
+            .as_bytes(),
         )?;
         Ok(())
     }
@@ -186,7 +191,7 @@ struct CliLogger {
     verbose: bool,
 }
 impl CliLogger {
-    fn new(&self) {
+    fn init(&self) {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
@@ -235,7 +240,7 @@ impl<'a> FileLogger<'a> {
                 .expect("could not create log file!")
         });
         log_file
-            .write(output.as_bytes())
+            .write_all(output.as_bytes())
             .expect("could not write to log file!");
     }
 }

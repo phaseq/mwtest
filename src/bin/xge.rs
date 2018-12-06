@@ -36,8 +36,8 @@ fn accept_commands(stream: TcpStream) {
 
 fn report(id: u64, exit_code: i32, output: &str) {
     let result = xge_lib::StreamResult {
-        id: id,
-        exit_code: exit_code,
+        id,
+        exit_code,
         stdout: output.to_string(),
     };
     println!("mwt {}", serde_json::to_string(&result).unwrap());

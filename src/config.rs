@@ -55,7 +55,6 @@ impl BuildLayoutFile {
         for v in content.dependencies.values_mut() {
             *v = BuildDependency {
                 solution: build_dir
-                    .clone()
                     .join(v.solution.clone())
                     .to_string_lossy()
                     .into_owned(),
@@ -63,11 +62,7 @@ impl BuildLayoutFile {
             };
         }
         for p in content.exes.values_mut() {
-            *p = build_dir
-                .clone()
-                .join(p.clone())
-                .to_string_lossy()
-                .into_owned();
+            *p = build_dir.join(p.clone()).to_string_lossy().into_owned();
         }
         Ok(content)
     }
@@ -135,13 +130,15 @@ impl TestGroup {
                 } else {
                     p
                 }
-            }).map(|p| {
+            })
+            .map(|p| {
                 p.strip_prefix(&input_paths.testcases_root)
                     .unwrap()
                     .to_string_lossy()
                     .to_string()
                     .replace('\\', "/")
-            }).map(|rel_path: String| {
+            })
+            .map(|rel_path: String| {
                 let id = match re.captures(&rel_path) {
                     Some(capture) => capture.get(1).map_or("", |m| m.as_str()),
                     None => {
@@ -156,7 +153,8 @@ impl TestGroup {
                     id: id.to_string(),
                     rel_path: Some(PathBuf::from(&rel_path)),
                 }
-            }).collect()
+            })
+            .collect()
     }
     fn generate_gtest_inputs(&self, input_paths: &InputPaths) -> Vec<::TestId> {
         let filter = self.find_gtest.clone().unwrap();
@@ -236,7 +234,7 @@ impl InputPaths {
                 println!("unknown layout");
             }
         }
-        build_dir = given_build_dir.map(|p| PathBuf::from(p)).or(build_dir);
+        build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
         build_layout = given_build_layout.or(build_layout);
         if build_dir.is_none() || !build_dir.as_ref().unwrap().exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
@@ -260,7 +258,7 @@ impl InputPaths {
             }
         }
         testcases_root = given_testcases_root
-            .map(|p| PathBuf::from(p))
+            .map(PathBuf::from)
             .unwrap_or(testcases_root);
         preset = given_preset.unwrap_or(preset);
         if !testcases_root.exists() {
@@ -277,10 +275,10 @@ impl InputPaths {
         let app_properties = AppPropertiesFile::open(&app_config_path, &build_layout_file).unwrap();
 
         InputPaths {
-            app_properties: app_properties,
+            app_properties,
             build_file: build_layout_file,
-            preset_path: preset_path,
-            testcases_root: PathBuf::from(testcases_root),
+            preset_path,
+            testcases_root,
         }
     }
 
@@ -363,10 +361,12 @@ impl InputPaths {
         let components = cwd.components();
         let dev_component = std::ffi::OsString::from("dev");
         let mut found = false;
-        let dev: Vec<_> = components.into_iter().take_while(|c| {
-            found = c.as_os_str() == dev_component;
-            !found
-        }).collect();
+        let dev: Vec<_> = components
+            .take_while(|c| {
+                found = c.as_os_str() == dev_component;
+                !found
+            })
+            .collect();
         if !found {
             None
         } else {
@@ -411,7 +411,8 @@ impl CommandTemplate {
                     patterns
                         .iter()
                         .fold(t.to_owned(), |acc, (k, v)| acc.replace(k, v))
-                }).collect(),
+                })
+                .collect(),
         )
     }
     pub fn has_pattern(&self, pattern: &str) -> bool {
