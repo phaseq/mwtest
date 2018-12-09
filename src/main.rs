@@ -11,8 +11,8 @@ extern crate xge_lib;
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
-use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
 use crate::config::CommandTemplate;
+use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
 use scoped_threadpool::Pool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -421,7 +421,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
                 stdout: stream_result.stdout,
             };
             let success = result.exit_code == 0;
-            let mut locked_issued_commands = issued_commands2.lock().unwrap();
+            let locked_issued_commands = issued_commands2.lock().unwrap();
             let test_instance = &locked_issued_commands[stream_result.id as usize];
             let message = (test_instance.clone(), result);
             tx.send(message)

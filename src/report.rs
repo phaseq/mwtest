@@ -2,6 +2,7 @@ use std::collections::{hash_map, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 pub struct Report<'a> {
     std_out: CliLogger,
@@ -60,7 +61,11 @@ impl<'a> XmlReport<'a> {
         })
     }
 
-    fn add(&mut self, test_instance: crate::TestInstance<'a>, test_result: &crate::TestCommandResult) {
+    fn add(
+        &mut self,
+        test_instance: crate::TestInstance<'a>,
+        test_result: &crate::TestCommandResult,
+    ) {
         match self.results.entry(test_instance.app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
                 e.insert(vec![(test_instance, test_result.clone())]);
@@ -133,7 +138,17 @@ impl<'a> XmlReport<'a> {
                 } else {
                     "different"
                 };
-                let abs_artifact_path = self.artifacts_root.join(sub_dir).join(rel_path);
+                let mut abs_artifact_path = self.artifacts_root.join(sub_dir).join(rel_path);
+                if abs_artifact_path.exists() {
+                    abs_artifact_path.set_file_name(
+                        abs_artifact_path
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned()
+                            + &Uuid::new_v4().to_string(),
+                    );
+                }
                 if abs_reference_path.is_dir() || tmp_path.is_file() {
                     std::fs::create_dir_all(abs_artifact_path.parent().unwrap())?;
                     std::fs::rename(&tmp_path, &abs_artifact_path)?;
