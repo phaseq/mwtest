@@ -7,7 +7,7 @@ import subprocess
 import xml.sax.saxutils
 
 
-def report_results(test_results, artifacts_dir, verbosity, test_count):
+def report_results(test_results, testcases_root, artifacts_dir, verbosity, test_count):
     if test_count == 0:
         print("WARNING: you have not selected any tests!")
 
@@ -30,7 +30,7 @@ def report_results(test_results, artifacts_dir, verbosity, test_count):
         elif (name, id) in failed:
             failed[(name, id)][1] += 1
 
-    print_result_to_junit_xml(test_results_backup, artifacts_dir)
+    print_result_to_junit_xml(test_results_backup, testcases_root, artifacts_dir)
     overall_success = True
     if failed:
         instable_list = [(k[0], k[1], v[0]) for k, v in failed.iteritems() if v[1] != 0]
@@ -61,7 +61,7 @@ def print_result_to_log(artifacts_dir, success, name, id, message):
     f.flush()
 
 
-def print_result_to_junit_xml(test_results, artifacts_dir):
+def print_result_to_junit_xml(test_results, testcases_root, artifacts_dir):
     f = open(os.path.join(artifacts_dir, 'results.xml'), 'w')
     f.write('<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n')
     results_per_testsuite = {}
@@ -82,8 +82,8 @@ def print_result_to_junit_xml(test_results, artifacts_dir):
                 f.write('<failure/>\n')
             if 'artifacts' in result:
                 for artifact in result['artifacts']:
-                    ref_path = os.path.abspath(artifact['reference'])
-                    loc_path = os.path.abspath(artifact['location'])
+                    ref_path = os.path.relpath(os.path.abspath(artifact['reference']), testcases_root)
+                    loc_path = os.path.relpath(os.path.abspath(artifact['location']), artifacts_dir)
                     f.write('<artifact reference="%s" location="%s" />' % (xml.sax.saxutils.escape(ref_path),
                                                                            xml.sax.saxutils.escape(loc_path)))
             f.write('<system-out>%s</system-out>\n' % xml.sax.saxutils.escape(result['output']))
@@ -93,17 +93,17 @@ def print_result_to_junit_xml(test_results, artifacts_dir):
 
 
 def print_result_to_stdout(success, name, id, message, verbosity, progress):
-    if success:
-        if verbosity == 2:
-            print('Ok: {} --id "{}"\n{}'.format(name, id.display_id, message))
-        elif verbosity == 1:
-            print_statusline('[{}/{}] Ok: {} --id "{}"\r'.format(progress[0], progress[1], name, id.display_id))
+    status_str = 'Ok' if success else 'Failed'
+    status_line = '[{}/{}] {}: {} --id "{}"'.format(progress[0], progress[1], status_str, name, id.display_id)
+    print_content = (not success) or (verbosity == 2)
+    if sys.stdout.isatty():
+        print_statusline(status_line)
+        if print_content:
+            print('\n{}'.format(message))
     else:
-        if verbosity == 1:
-            print_statusline('\nFailed: {} --id "{}"'.format(name, id.display_id))
-            print('\n' + message)
-        else:
-            print('\nFailed: {} --id "{}"\n{}'.format(name, id.display_id, message))
+        print(status_line)
+        if print_content:
+            print(message)
     sys.stdout.flush()
 
 

@@ -373,7 +373,8 @@ def cmd_run(args):
         result = run_all(tests_with_ids)
     test_count = count_test_ids(tests_with_ids)
     from report import report_results
-    return report_results(result, artifacts_dir, verbosity, test_count)
+    success = report_results(result, args.testcases_dir_path, artifacts_dir, verbosity, test_count)
+    exit(0 if success else 1)
 
 
 def cmd_debug(args):

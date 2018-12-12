@@ -222,7 +222,7 @@ class Dialog(Tkinter.Frame):
             self.main_option()
 
 
-def load_report(file_name):
+def load_report(file_name, testcases_root):
     tests = []
     doc = minidom.parse(file_name)
     testsuites = doc.getElementsByTagName('testsuite')
@@ -236,6 +236,11 @@ def load_report(file_name):
             artifact_path = artifact.attributes['location'].value
             if not os.path.isabs(artifact_path):
                 artifact_path = os.path.abspath(os.path.join(os.path.dirname(file_name), artifact_path))
+            if not os.path.isabs(reference_path):
+                if not testcases_root:
+                    print("you need to specify --testcases-dir!")
+                    exit(1)
+                reference_path = os.path.abspath(os.path.join(testcases_root, reference_path))
             if os.path.isfile(reference_path) and os.path.isdir(artifact_path):
                 reference_path = os.path.dirname(reference_path)
 
@@ -290,6 +295,7 @@ def cli():
     parser = argparse.ArgumentParser(description="MWTest Result Comparison")
     parser.add_argument('file', nargs='?', default=find_report(), help='location of the mwtest XML file')
     parser.add_argument('--config', '-c', help='the config file containing the paths to the comparison tools')
+    parser.add_argument('--testcases-dir')
     args = parser.parse_args()
 
     if not args.file:
@@ -303,7 +309,7 @@ def cli():
         exit(1)
 
     comparers = comparers_from_args(args)
-    report = load_report(args.file)
+    report = load_report(args.file, args.testcases_dir)
     Dialog(report, comparers)
 
 
