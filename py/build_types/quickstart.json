@@ -1,0 +1,16 @@
+{
+  "verifier": {
+    "exe": "mwVerifierTest.exe",
+    "dll": "mwVerifier.dll"
+  },
+  "exactoutput": {
+    "exe": "exactoutputBT.exe",
+    "cwd": "."
+  },
+  "machsim": {
+    "exe": "machsimtest.exe"
+  },
+  "collisionchecker": {
+    "exe": "CollisionCheckerTest.exe"
+  }
+}

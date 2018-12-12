@@ -1,0 +1,25 @@
+{
+  "verifier": {
+    "exe": "5axis/test/verifiertest/DebugUnicode/mwVerifierTest.exe",
+    "dll": "5axis/customer/quickstart_Debug/mwVerifier.dll"
+  },
+  "exactoutput": {
+    "exe": "5axis/test/exactoutputBT/DebugUnicode/exactoutputBT.exe",
+    "cwd": "5axis/customer/quickstart_Debug"
+  },
+  "verifierUnit": {
+    "exe": "mwcutsim/mwVerifierUnitTest/DebugUnicode/mwVerifierUnitTest.exe",
+    "cwd": "mwcutsim/mwVerifierUnitTest/RunDir"
+  },
+  "verifierApi": {
+    "exe": "5axis/customer/quickstart_Debug/mwVerifierApiTest.exe",
+    "cwd": "mwcutsim/mwVerifierApiTest/RunDir"
+  },
+  "machsim": {
+    "exe": "5axis/test/machsimtest/DebugUnicode/machsimtest.exe"
+  },
+  "cncsim": {
+    "exe": "CNCSim/mwCNCSimTest/bin/Debug/mwCNCSimTest.exe",
+    "cwd": "5axis/customer/quickstart_Debug"
+  }
+}
