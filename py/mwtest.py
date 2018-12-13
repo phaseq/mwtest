@@ -135,7 +135,9 @@ def run(test_group, repeat_if_failed):
 
 
 def run_in_pool(test_group, pool, repeat_if_failed):
-    return pool.imap_unordered(run_one_multiprocessing, ((t, test_group, repeat_if_failed) for t in test_group.test_ids))
+    for result in pool.imap_unordered(run_one_multiprocessing,
+                                      ((t, test_group, repeat_if_failed) for t in test_group.test_ids)):
+        yield result
 
 
 def run_all(tests_with_ids, repeat_if_failed):
@@ -237,7 +239,6 @@ class XGEQueue:
             del self.queued_tests[queue_id]
             return (test_id, test_group, tmp_dir, returncode, output)
         return None
-
 
 
 def split_by_xge(tests_with_ids):
