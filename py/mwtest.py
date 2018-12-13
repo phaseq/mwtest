@@ -96,12 +96,15 @@ def generate_tmp_dir(artifacts_dir):
     return os.path.join(artifacts_dir, 'tmp', uuid.uuid4().hex)
 
 
-def run_one(test_id, test_group):
-    cmd, cwd, tmp_dir = command_for(test_id, test_group)
-    return_code, output = adaptors.run_exe(cmd, cwd=cwd)
-    result = process_result(test_id, return_code, output, tmp_dir, test_group.artifacts_path,
-                            test_group.testcases_path, test_group.app_properties.input_is_dir)
-    return test_group.app_name, test_id, result
+def run_one(test_id, test_group, repeat_if_failed):
+    for i in range(repeat_if_failed + 1):
+        cmd, cwd, tmp_dir = command_for(test_id, test_group)
+        return_code, output = adaptors.run_exe(cmd, cwd=cwd)
+        result = process_result(test_id, return_code, output, tmp_dir, test_group.artifacts_path,
+                                test_group.testcases_path, test_group.app_properties.input_is_dir)
+        yield test_group.app_name, test_id, result
+        if result['success']:
+            break
 
 
 def process_result(test_id, returncode, output, tmp_path, artifacts_path, testcases_path, input_is_dir):
@@ -125,18 +128,19 @@ def run_one_multiprocessing(args):
     return list(run_one(*args))
 
 
-def run(test_group):
+def run(test_group, repeat_if_failed):
     for t in test_group.test_ids:
-        yield run_one(t, test_group)
+        for result in run_one(t, test_group, repeat_if_failed):
+            yield result
 
 
-def run_in_pool(test_group, pool):
-    return pool.imap_unordered(run_one_multiprocessing, ((t, test_group) for t in test_group.test_ids))
+def run_in_pool(test_group, pool, repeat_if_failed):
+    return pool.imap_unordered(run_one_multiprocessing, ((t, test_group, repeat_if_failed) for t in test_group.test_ids))
 
 
-def run_all(tests_with_ids):
+def run_all(tests_with_ids, repeat_if_failed):
     for test_group in tests_with_ids:
-        for result in run(test_group):
+        for result in run(test_group, repeat_if_failed):
             yield result
 
 
@@ -149,16 +153,16 @@ def init_worker():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
-def run_all_multiprocessing(tests_with_ids):
+def run_all_multiprocessing(tests_with_ids, repeat_if_failed):
     concurrency = multiprocessing.cpu_count()
     pool = Pool(concurrency, init_worker)
     try:
         for test_group in tests_with_ids:
             if test_group.parallel:
-                for result in run_in_pool(test_group, pool):
+                for result in run_in_pool(test_group, pool, repeat_if_failed):
                     yield result
             else:
-                for result in run(test_group):
+                for result in run(test_group, repeat_if_failed):
                     yield result
     except KeyboardInterrupt:
         pool.terminate()
@@ -364,13 +368,13 @@ def cmd_run(args):
             print("when using --id you have specify exactly one test application")
             exit(1)
         else:
-            result = run_all(tests_with_ids)
+            result = run_all(tests_with_ids, repeat_if_failed=args.repeat_if_failed)
     elif args.xge:
         result = run_all_xge(tests_with_ids, repeat_if_failed=args.repeat_if_failed)
     elif args.local_parallel:
-        result = run_all_multiprocessing(tests_with_ids)
+        result = run_all_multiprocessing(tests_with_ids, repeat_if_failed=args.repeat_if_failed)
     else:
-        result = run_all(tests_with_ids)
+        result = run_all(tests_with_ids, repeat_if_failed=args.repeat_if_failed)
     test_count = count_test_ids(tests_with_ids)
     from report import report_results
     success = report_results(result, args.testcases_dir_path, artifacts_dir, verbosity, test_count)
@@ -412,9 +416,17 @@ def cmd_build(args):
         projects = ','.join(projects)
         print("solution: {}".format(solution))
         print("  -> building projects: {}...".format(projects))
-        cmd = ['buildConsole', solution, '/build', '/silent', '/cfg=ReleaseUnicode|x64', '/prj=' + projects,
+        cmd = ['buildConsole', solution, '/build', '/cfg=ReleaseUnicode|x64', '/prj=' + projects,
                '/openmonitor']
-        subprocess.call(cmd)
+        if not args.verbose:
+            cmd.append('/silent')
+        return_code = subprocess.call(cmd)
+        if return_code == 0:
+            print("Build succeeded.")
+        else:
+            print("Build failed!")
+            exit(return_code)
+    exit(0)
 
 
 """
@@ -485,6 +497,7 @@ def cli():
     parser_build = parser_command.add_parser('build')
     parser_build.add_argument('test', nargs='+', choices=registered_tests + ['all'],
                               help="the test applications you want to run")
+    parser_build.add_argument('--verbose', '-v', action='store_true', help="show build output")
     parser_build.set_defaults(func=cmd_build)
 
     # parser_checkout = parser_command.add_parser('checkout')

@@ -6,8 +6,6 @@ import socket
 import json
 import threading
 from adaptors import strip_invalid_chars
-import uuid
-import os
 
 
 def recv_lines(conn):
@@ -33,7 +31,7 @@ def server():
     conn, addr = s.accept()
     for line in recv_lines(conn):
         run_local, caption, cwd, command = json.loads(line)
-        command_str = ' '.join('"' + t + '"' for t in command)
+        command_str = ' '.join(command)
         if run_local == 'local':
             subprocess.Popen('xgSubmit /allowremote=off /caption=\"{}\" /command {}'.format(caption, command_str),
                              cwd=cwd)
