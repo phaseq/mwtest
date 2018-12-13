@@ -135,9 +135,10 @@ def run(test_group, repeat_if_failed):
 
 
 def run_in_pool(test_group, pool, repeat_if_failed):
-    for result in pool.imap_unordered(run_one_multiprocessing,
+    for results in pool.imap_unordered(run_one_multiprocessing,
                                       ((t, test_group, repeat_if_failed) for t in test_group.test_ids)):
-        yield result
+        for result in results:
+            yield result
 
 
 def run_all(tests_with_ids, repeat_if_failed):
