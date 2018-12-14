@@ -54,13 +54,14 @@ impl BuildLayoutFile {
             *v = BuildDependency {
                 solution: build_dir
                     .join(v.solution.clone())
-                    .to_string_lossy()
-                    .into_owned(),
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
                 project: v.project.clone(),
             };
         }
         for p in content.exes.values_mut() {
-            *p = build_dir.join(p.clone()).to_string_lossy().into_owned();
+            *p = build_dir.join(p.clone()).to_str().unwrap().to_string();
         }
         Ok(content)
     }
@@ -117,8 +118,9 @@ impl TestGroup {
         let abs_path = input_paths
             .testcases_root
             .join(self.find_glob.clone().unwrap())
-            .to_string_lossy()
-            .into_owned();
+            .to_str()
+            .unwrap()
+            .to_string();
         glob::glob(&abs_path)
             .expect("failed to read glob pattern!")
             .map(|p| p.unwrap())
@@ -132,8 +134,8 @@ impl TestGroup {
             .map(|p| {
                 p.strip_prefix(&input_paths.testcases_root)
                     .unwrap()
-                    .to_string_lossy()
-                    .to_string()
+                    .to_str()
+                    .unwrap()
                     .replace('\\', "/")
             })
             .map(|rel_path: String| {

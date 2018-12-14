@@ -144,8 +144,9 @@ impl<'a> XmlReport<'a> {
                         abs_artifact_path
                             .file_name()
                             .unwrap()
-                            .to_string_lossy()
-                            .into_owned()
+                            .to_str()
+                            .unwrap()
+                            .to_string()
                             + &Uuid::new_v4().to_string(),
                     );
                 }

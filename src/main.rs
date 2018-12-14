@@ -513,16 +513,16 @@ fn test_id_to_input(
             // machsim case
             let full_path = input_paths.testcases_root.join(&rel_path);
             (
-                full_path.to_string_lossy().into_owned(),
-                full_path.to_string_lossy().into_owned(),
+                full_path.to_str().unwrap().to_string(),
+                full_path.to_str().unwrap().to_string(),
             )
         } else if let Some(cwd) = &app_properties.cwd {
             // cncsim case
-            (full_path.to_string_lossy().into_owned(), cwd.clone())
+            (full_path.to_str().unwrap().to_string(), cwd.clone())
         } else {
             // verifier case
-            let file_name = rel_path.file_name().unwrap().to_string_lossy().into_owned();
-            let parent_dir = full_path.parent().unwrap().to_string_lossy().to_string();
+            let file_name = rel_path.file_name().unwrap().to_str().unwrap().to_string();
+            let parent_dir = full_path.parent().unwrap().to_str().unwrap().to_string();
             (file_name, parent_dir)
         }
     } else {
@@ -547,7 +547,7 @@ fn test_command_generator(
     if command.has_pattern("{{tmp_path}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
-            let tmp_path = tmp_dir.to_string_lossy().into_owned();
+            let tmp_path = tmp_dir.to_str().unwrap().to_string();
             let command = command.apply("{{tmp_path}}", &tmp_path);
             std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
             TestCommand {
@@ -559,7 +559,7 @@ fn test_command_generator(
     } else if command.has_pattern("{{tmp_file}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
-            let tmp_path = tmp_dir.to_string_lossy().into_owned();
+            let tmp_path = tmp_dir.to_str().unwrap().to_string();
             let command = command.apply("{{tmp_file}}", &tmp_path);
             TestCommand {
                 command: command.0.clone(),
