@@ -1,16 +1,5 @@
 mod config;
 mod report;
-extern crate clap;
-extern crate htmlescape;
-extern crate num_cpus;
-extern crate scoped_threadpool;
-extern crate term_size;
-extern crate uuid;
-extern crate xge_lib;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate serde_json;
 use crate::config::CommandTemplate;
 use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
 use scoped_threadpool::Pool;
