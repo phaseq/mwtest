@@ -150,18 +150,20 @@ impl<'a> XmlReport<'a> {
                             + &Uuid::new_v4().to_string(),
                     );
                 }
+
                 if abs_reference_path.is_dir() || tmp_path.is_file() {
                     std::fs::create_dir_all(abs_artifact_path.parent().unwrap())?;
                     std::fs::rename(&tmp_path, &abs_artifact_path)?;
-                    self.write_artifact(out, &abs_artifact_path, &abs_artifact_path)?;
+                    self.write_artifact(out, &abs_reference_path, &abs_artifact_path)?;
                 } else {
-                    std::fs::create_dir_all(&abs_artifact_path)?;
+                    let abs_artifact_dir = abs_artifact_path.parent().unwrap();
+                    std::fs::create_dir_all(&abs_artifact_dir)?;
                     for entry in std::fs::read_dir(tmp_path)? {
                         let from = entry?.path();
                         let file_name = &from.file_name().unwrap();
-                        let to = abs_reference_path.join(file_name);
+                        let to = abs_artifact_dir.join(file_name);
                         std::fs::rename(&from, &to)?;
-                        self.write_artifact(out, &abs_artifact_path, &abs_artifact_path)?;
+                        self.write_artifact(out, &abs_reference_path, &abs_artifact_dir)?;
                     }
                 }
             }

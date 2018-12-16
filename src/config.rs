@@ -221,17 +221,14 @@ impl InputPaths {
             BuildLayout::Dev(path) => {
                 build_dir = Some(path);
                 build_layout = Some("dev-releaseunicode");
-                println!("dev layout");
             }
             BuildLayout::Quickstart(path) => {
                 build_dir = Some(path);
                 build_layout = Some("quickstart");
-                println!("quickstart layout");
             }
             BuildLayout::None => {
                 build_dir = None;
                 build_layout = None;
-                println!("unknown layout");
             }
         }
         build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
@@ -358,10 +355,10 @@ impl InputPaths {
 
     fn find_dev_root() -> Option<PathBuf> {
         let cwd = std::env::current_dir().unwrap();
-        let components = cwd.components();
         let dev_component = std::ffi::OsString::from("dev");
         let mut found = false;
-        let dev: Vec<_> = components
+        let dev: Vec<_> = cwd
+            .components()
             .take_while(|c| {
                 found = c.as_os_str() == dev_component;
                 !found
