@@ -56,6 +56,11 @@ fn main() {
             SubCommand::with_name("run")
                 .arg(test_app_arg)
                 .arg(filter_arg)
+                .arg(Arg::with_name("id")
+                    .long("id")
+                    .takes_value(true))
+                .group(ArgGroup::with_name("filter_group")
+                    .args(&["filter", "id"]))
                 .arg(Arg::with_name("verbose")
                     .short("v")
                     .long("verbose"))
@@ -653,12 +658,15 @@ fn test_apps_from_args(
 ) -> Vec<AppWithTests> {
     let filter_tokens: Option<Vec<&str>> = args.values_of("filter").map(|v| v.collect());
     let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
+    let id_token = args.value_of("id").map(|v| normalize(v));
     let id_filter = |input: &str| {
         let input = normalize(input);
         if let Some(filters) = &filter_tokens {
             filters
                 .iter()
                 .any(|f| input.contains(normalize(f).as_str()))
+        } else if let Some(id) = &id_token {
+            input == *id
         } else {
             true
         }

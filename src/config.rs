@@ -162,7 +162,14 @@ impl TestGroup {
             .build_file
             .exes
             .get(filter[0].as_str())
-            .expect("could not find find_gtest executable!");
+            .expect("build layout file needs to contain the test executable!");
+        if !PathBuf::from(cmd).exists() {
+            println!(
+                "Could not find GTest executable at {}!\nDid you forget to build?",
+                cmd
+            );
+            std::process::exit(-1);
+        }
         let output = std::process::Command::new(cmd)
             .args(filter[1..].iter())
             .output()
