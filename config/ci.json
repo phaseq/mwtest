@@ -7,22 +7,38 @@
   ],
   "verifierUnit": [
     {
-      "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*-*Nightly*:*RunLocal*"],
+      "find_gtest": [
+        "{{exe}}",
+        "--gtest_list_tests",
+        "--gtest_filter=*-*Nightly*:*RunLocal*"
+      ],
       "id_pattern": "(.*)"
     },
     {
-      "find_gtest": ["{{mwVerifierUnitTest}}", "--gtest_list_tests", "--gtest_filter=*RunLocal*-*Nightly*"],
+      "find_gtest": [
+        "{{exe}}",
+        "--gtest_list_tests",
+        "--gtest_filter=*RunLocal*-*Nightly*"
+      ],
       "id_pattern": "(.*)",
       "xge": false
     }
   ],
   "verifierApi": [
     {
-      "find_gtest": ["{{mwVerifierApiTest}}", "--gtest_list_tests", "--gtest_filter=*-*Nightly*:*RunLocal*"],
+      "find_gtest": [
+        "{{exe}}",
+        "--gtest_list_tests",
+        "--gtest_filter=*-*Nightly*:*RunLocal*"
+      ],
       "id_pattern": "(.*)"
     },
     {
-      "find_gtest": ["{{mwVerifierApiTest}}", "--gtest_list_tests", "--gtest_filter=*RunLocal*-*Nightly*"],
+      "find_gtest": [
+        "{{exe}}",
+        "--gtest_list_tests",
+        "--gtest_filter=*RunLocal*-*Nightly*"
+      ],
       "id_pattern": "(.*)",
       "xge": false
     }

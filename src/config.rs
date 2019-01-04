@@ -5,20 +5,60 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 pub struct AppPropertiesFile(HashMap<String, AppProperties>);
-impl AppPropertiesFile {
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AppProperties {
+    pub command_template: CommandTemplate,
+    #[serde(default)]
+    pub input_is_dir: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+pub struct BuildLayoutFile {
+    pub apps: HashMap<String, AppLayout>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AppLayout {
+    pub solution: Option<String>,
+    pub project: Option<String>,
+    pub exe: String,
+    pub cwd: Option<String>,
+    pub dll: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct Apps(HashMap<String, App>);
+impl Apps {
     fn open(
-        path: &Path,
-        build_layout: &BuildLayoutFile,
-    ) -> Result<AppPropertiesFile, Box<std::error::Error>> {
-        let file = File::open(path)?;
-        let mut content: AppPropertiesFile = serde_json::from_reader(file)?;
-        for test in content.0.values_mut() {
-            (*test).apply_patterns(&build_layout.exes);
-        }
-        Ok(content)
+        properties_path: &Path,
+        build_layout_path: &Path,
+        build_dir: &Path,
+    ) -> Result<Apps, Box<std::error::Error>> {
+        let properties: AppPropertiesFile = serde_json::from_reader(File::open(properties_path)?)?;
+        let layout: BuildLayoutFile = serde_json::from_reader(File::open(build_layout_path)?)?;
+        let apps = layout
+            .apps
+            .iter()
+            .map(|(k, v)| {
+                let mut app_layout = v.clone();
+                apply_build_dir(&mut app_layout, &build_dir);
+                let mut app_props = properties.0[k].clone();
+                apply_layout(&mut app_props, &app_layout);
+                (
+                    (*k).clone(),
+                    App {
+                        properties: app_props,
+                        layout: app_layout,
+                    },
+                )
+            })
+            .collect();
+        Ok(Apps(apps))
     }
 
-    pub fn get(&self, app_name: &str) -> Option<&AppProperties> {
+    pub fn get(&self, app_name: &str) -> Option<&App> {
         self.0.get(app_name)
     }
 
@@ -27,50 +67,38 @@ impl AppPropertiesFile {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct AppProperties {
-    pub command_template: CommandTemplate,
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub input_is_dir: bool,
+#[derive(Debug, Clone)]
+pub struct App {
+    pub properties: AppProperties,
+    pub layout: AppLayout,
 }
-impl AppProperties {
-    fn apply_patterns(&mut self, patterns: &HashMap<String, String>) {
-        self.command_template = self.command_template.apply_all(patterns);
-        self.cwd = self.cwd.clone().map(|d| patterns[&d].clone());
+impl App {}
+fn apply_layout(app_props: &mut AppProperties, app_layout: &AppLayout) {
+    app_props.command_template = app_props
+        .command_template
+        .apply("{{exe}}", app_layout.exe.as_str());
+    if let Some(dll) = &app_layout.dll {
+        app_props.command_template = app_props.command_template.apply("{{dll}}", dll);
     }
 }
-
-#[derive(Debug, Deserialize)]
-pub struct BuildLayoutFile {
-    pub dependencies: HashMap<String, BuildDependency>,
-    pub exes: HashMap<String, String>,
-}
-impl BuildLayoutFile {
-    pub fn from(path: &Path, build_dir: &Path) -> Result<BuildLayoutFile, Box<std::error::Error>> {
-        let file = File::open(path)?;
-        let mut content: BuildLayoutFile = serde_json::from_reader(file)?;
-        for v in content.dependencies.values_mut() {
-            *v = BuildDependency {
-                solution: build_dir
-                    .join(v.solution.clone())
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                project: v.project.clone(),
-            };
-        }
-        for p in content.exes.values_mut() {
-            *p = build_dir.join(p.clone()).to_str().unwrap().to_string();
-        }
-        Ok(content)
+fn apply_build_dir(app_layout: &mut AppLayout, build_dir: &Path) {
+    if let Some(solution) = &app_layout.solution {
+        app_layout.solution = Some(
+            build_dir
+                .join(solution.clone())
+                .to_str()
+                .unwrap()
+                .to_string(),
+        );
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BuildDependency {
-    pub solution: String,
-    pub project: String,
+    app_layout.exe = build_dir
+        .join(app_layout.exe.clone())
+        .to_str()
+        .unwrap()
+        .to_string();
+    if let Some(dll) = &app_layout.dll {
+        app_layout.dll = Some(build_dir.join(dll.clone()).to_str().unwrap().to_string());
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,15 +124,11 @@ pub struct TestGroup {
     pub xge: bool,
 }
 impl TestGroup {
-    pub fn generate_test_inputs(
-        &self,
-        test_config: &AppProperties,
-        input_paths: &InputPaths,
-    ) -> Vec<crate::TestId> {
+    pub fn generate_test_inputs(&self, app: &App, input_paths: &InputPaths) -> Vec<crate::TestId> {
         if self.find_glob.is_some() {
-            self.generate_path_inputs(&test_config, &input_paths)
+            self.generate_path_inputs(&app.properties, &input_paths)
         } else if self.find_gtest.is_some() {
-            self.generate_gtest_inputs(&input_paths)
+            self.generate_gtest_inputs(&app)
         } else {
             panic!("no test generator defined!");
         }
@@ -156,21 +180,16 @@ impl TestGroup {
             })
             .collect()
     }
-    fn generate_gtest_inputs(&self, input_paths: &InputPaths) -> Vec<crate::TestId> {
+    fn generate_gtest_inputs(&self, app: &App) -> Vec<crate::TestId> {
         let filter = self.find_gtest.clone().unwrap();
-        let cmd = &input_paths
-            .build_file
-            .exes
-            .get(filter[0].as_str())
-            .expect("build layout file needs to contain the test executable!");
-        if !PathBuf::from(cmd).exists() {
+        if !PathBuf::from(&app.layout.exe).exists() {
             println!(
                 "Could not find GTest executable at {}!\nDid you forget to build?",
-                cmd
+                app.layout.exe
             );
             std::process::exit(-1);
         }
-        let output = std::process::Command::new(cmd)
+        let output = std::process::Command::new(&app.layout.exe)
             .args(filter[1..].iter())
             .output()
             .expect("failed to gather tests!");
@@ -203,17 +222,16 @@ fn true_value() -> bool {
 
 #[derive(Debug)]
 pub struct InputPaths {
-    pub app_properties: AppPropertiesFile,
-    pub build_file: BuildLayoutFile,
+    pub apps: Apps,
     pub preset_path: PathBuf,
     pub testcases_root: PathBuf,
 }
 impl InputPaths {
     pub fn get_registered_tests() -> Vec<String> {
-        let path = InputPaths::mwtest_config_root().join("tests.json");
+        let path = InputPaths::mwtest_config_root().join("apps.json");
         let file = File::open(path).unwrap();
         let content: AppPropertiesFile = serde_json::from_reader(file).unwrap();
-        content.app_names()
+        content.0.keys().cloned().collect()
     }
 
     pub fn from(
@@ -270,36 +288,22 @@ impl InputPaths {
             std::process::exit(-1);
         }
 
-        let build_layout_file =
-            InputPaths::build_layout_from(&build_layout.unwrap(), &build_dir.unwrap());
-        let preset_path = InputPaths::preset_from(&preset);
-
-        let root_dir = InputPaths::mwtest_config_root();
-        let app_config_path = root_dir.join("tests.json");
-        let app_properties = AppPropertiesFile::open(&app_config_path, &build_layout_file).unwrap();
-
-        InputPaths {
-            app_properties,
-            build_file: build_layout_file,
-            preset_path,
-            testcases_root,
-        }
-    }
-
-    fn build_layout_from(build_layout: &str, build_dir: &Path) -> BuildLayoutFile {
-        let path = match InputPaths::mwtest_config_path(build_layout) {
+        let build_layout_path = match InputPaths::mwtest_config_path(build_layout.unwrap()) {
             Some(path) => path,
             None => {
                 println!("could not determine build layout! Please make sure that the path given via --build exists!");
                 std::process::exit(-1);
             }
         };
-        match BuildLayoutFile::from(&path, &build_dir) {
-            Ok(content) => content,
-            Err(e) => {
-                println!("ERROR: failed to load build file {:?}:\n{}", path, e);
-                std::process::exit(-1);
-            }
+        let app_config_path = InputPaths::mwtest_config_root().join("apps.json");
+        let apps = Apps::open(&app_config_path, &build_layout_path, &build_dir.unwrap())
+            .expect("Failed to load config files!");
+
+        let preset_path = InputPaths::preset_from(&preset);
+        InputPaths {
+            apps,
+            preset_path,
+            testcases_root,
         }
     }
 
@@ -332,7 +336,7 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
-        if root.join("config/tests.json").exists() {
+        if root.join("config/apps.json").exists() {
             root.join("config")
         } else {
             // for "cargo run"
@@ -407,7 +411,7 @@ impl CommandTemplate {
                 .collect(),
         )
     }
-    pub fn apply_all(&self, patterns: &HashMap<String, String>) -> CommandTemplate {
+    /*pub fn apply_all(&self, patterns: &HashMap<String, String>) -> CommandTemplate {
         CommandTemplate(
             self.0
                 .iter()
@@ -418,7 +422,7 @@ impl CommandTemplate {
                 })
                 .collect(),
         )
-    }
+    }*/
     pub fn has_pattern(&self, pattern: &str) -> bool {
         self.0.iter().any(|t| t.contains(pattern))
     }

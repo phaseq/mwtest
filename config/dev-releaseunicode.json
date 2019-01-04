@@ -1,56 +1,52 @@
 {
-  "dependencies": {
-    "verifier": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "mwVerifierTest"
-    },
-    "verifierUnit": {
-      "solution": "mwcutsim/mwcutsim_2013.sln",
-      "project": "mwVerifierUnitTest"
-    },
-    "verifierApi": {
-      "solution": "mwcutsim/mwcutsim_2013.sln",
-      "project": "mwVerifierApiTest"
-    },
-    "cncsim": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "mwCNCSimTest"
-    },
-    "machsim": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "machsimtest"
-    },
-    "eo": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "exactoutputBT"
-    },
-    "mxp": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "MXPTest"
-    },
-    "cuttercompensation": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "mwCutterCompensationTest"
-    },
-    "collisionchecker": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "CollisionCheckerTest"
-    }
+  "verifier": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "mwVerifierTest",
+    "exe": "5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
+    "dll": "5axis/customer/quickstart/mwVerifier.dll"
   },
-  "exes": {
-    "{{mwVerifierTest}}": "5axis/test/verifiertest/ReleaseUnicode/mwVerifierTest.exe",
-    "{{mwVerifierDll}}": "5axis/customer/quickstart/mwVerifier.dll",
-    "{{mwVerifierUnitTest}}": "mwcutsim/mwVerifierUnitTest/ReleaseUnicode/mwVerifierUnitTest.exe",
-    "{{mwVerifierUnitTestCWD}}": "mwcutsim/mwVerifierUnitTest/RunDir",
-    "{{mwVerifierApiTest}}": "5axis/customer/quickstart/mwVerifierApiTest.exe",
-    "{{mwVerifierApiTestCWD}}": "mwcutsim/mwVerifierApiTest/RunDir",
-    "{{machsimtest}}": "5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe",
-    "{{mwCNCSimTest}}": "CNCSim/mwCNCSimTest/bin/Release/mwCNCSimTest.exe",
-    "{{mwCNCSimTestCWD}}": "5axis/customer/quickstart",
-    "{{exactoutput}}": "5axis/test/exactoutputBT/ReleaseUnicode/exactoutputBT.exe",
-    "{{exactoutputCWD}}": "5axis/customer/quickstart",
-    "{{MXPTest}}": "5axis/test/MXPTest/ReleaseUnicode/MXPTest.exe",
-    "{{mwCutterCompensationTest}}": "libraries/mwCutterCompensationTest/ReleaseUnicode/mwCutterCompensationTest.exe",
-    "{{CollisionCheckerTest}}": "5axis/test/CollisionCheckerTest/ReleaseUnicode/CollisionCheckerTest.exe"
+  "verifierUnit": {
+    "solution": "mwcutsim/mwcutsim_2013.sln",
+    "project": "mwVerifierUnitTest",
+    "exe": "mwcutsim/mwVerifierUnitTest/ReleaseUnicode/mwVerifierUnitTest.exe",
+    "cwd": "mwcutsim/mwVerifierUnitTest/RunDir"
+  },
+  "verifierApi": {
+    "solution": "mwcutsim/mwcutsim_2013.sln",
+    "project": "mwVerifierApiTest",
+    "exe": "5axis/customer/quickstart/mwVerifierApiTest.exe",
+    "cwd": "mwcutsim/mwVerifierApiTest/RunDir"
+  },
+  "cncsim": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "mwCNCSimTest",
+    "exe": "CNCSim/mwCNCSimTest/bin/Release/mwCNCSimTest.exe",
+    "cwd": "5axis/customer/quickstart"
+  },
+  "machsim": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "machsimtest",
+    "exe": "5axis/test/machsimtest/ReleaseUnicode/machsimtest.exe"
+  },
+  "eo": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "exactoutputBT",
+    "exe": "5axis/test/exactoutputBT/ReleaseUnicode/exactoutputBT.exe",
+    "cwd": "5axis/customer/quickstart"
+  },
+  "mxp": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "MXPTest",
+    "exe": "5axis/test/MXPTest/ReleaseUnicode/MXPTest.exe"
+  },
+  "cuttercompensation": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "mwCutterCompensationTest",
+    "exe": "5axis/test/CollisionCheckerTest/ReleaseUnicode/CollisionCheckerTest.exe"
+  },
+  "collisionchecker": {
+    "solution": "5axis/build_all_VS2013.sln",
+    "project": "CollisionCheckerTest",
+    "exe": "libraries/mwCutterCompensationTest/ReleaseUnicode/mwCutterCompensationTest.exe"
   }
 }

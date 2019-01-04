@@ -1,38 +1,22 @@
 {
-  "dependencies": {
-    "verifier": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "mwVerifierTest"
-    },
-    "machsim": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "machsimtest"
-    },
-    "eo": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "exactoutputBT"
-    },
-    "mxp": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "MXPTest"
-    },
-    "cuttercompensation": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "mwCutterCompensationTest"
-    },
-    "collisionchecker": {
-      "solution": "5axis/build_all_VS2013.sln",
-      "project": "CollisionCheckerTest"
-    }
+  "verifier": {
+    "exe": "mwVerifierTest.exe",
+    "dll": "mwVerifier.dll"
   },
-  "exes": {
-    "{{mwVerifierTest}}": "mwVerifierTest.exe",
-    "{{mwVerifierDll}}": "mwVerifier.dll",
-    "{{machsimtest}}": "machsimtest.exe",
-    "{{exactoutput}}": "exactoutputBT.exe",
-    "{{exactoutputCWD}}": ".",
-    "{{MXPTest}}": "MXPTest.exe",
-    "{{mwCutterCompensationTest}}": "mwCutterCompensationTest.exe",
-    "{{CollisionCheckerTest}}": "CollisionCheckerTest.exe"
+  "machsim": {
+    "exe": "machsimtest.exe"
+  },
+  "eo": {
+    "exe": "exactoutputBT.exe",
+    "cwd": "."
+  },
+  "mxp": {
+    "exe": "MXPTest.exe"
+  },
+  "cuttercompensation": {
+    "exe": "mwCutterCompensationTest"
+  },
+  "collisionchecker": {
+    "exe": "CollisionCheckerTest.exe"
   }
 }

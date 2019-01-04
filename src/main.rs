@@ -41,9 +41,11 @@ fn main() {
         .arg(Arg::with_name("BUILD_LAYOUT")
             .short("b")
             .long("--build")
+            .takes_value(true)
             .help("specifies the layout of your build (like dev-releaseunicode, quickstart or cmake)"))
         .arg(Arg::with_name("PRESET")
             .long("--preset")
+            .takes_value(true)
             .help("specifies which tests to run (like ci, nightly)"))
         .subcommand(
             SubCommand::with_name("build")
@@ -165,12 +167,18 @@ fn main() {
 
 fn cmd_build(test_names: &[&str], input_paths: &config::InputPaths) {
     let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
-    for dep in test_names
+    for (name, dep) in test_names
         .iter()
-        .map(|n| &input_paths.build_file.dependencies[*n])
+        .map(|n| (n.clone(), &input_paths.apps.get(*n).unwrap().layout))
     {
-        let deps = dependencies.entry(&dep.solution).or_insert_with(Vec::new);
-        (*deps).push(&dep.project);
+        if dep.solution.is_none() || dep.project.is_none() {
+            println!("ERROR: no solution/project defined for {}", name);
+            std::process::exit(-1);
+        }
+        let deps = dependencies
+            .entry(dep.solution.as_ref().unwrap())
+            .or_insert_with(Vec::new);
+        (*deps).push(dep.project.as_ref().unwrap());
     }
     for (solution, projects) in dependencies {
         let projects = projects.join(",");
@@ -438,7 +446,7 @@ struct RunConfig {
 #[derive(Debug)]
 struct AppWithTests {
     name: String,
-    config: config::AppProperties,
+    app: config::App,
     tests: Vec<GroupWithTests>,
 }
 
@@ -488,9 +496,9 @@ fn create_run_commands<'a>(
     for app in test_apps {
         for group in &app.tests {
             for test_id in &group.test_ids {
-                let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.config);
+                let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
                 let generator = test_command_generator(
-                    &app.config.command_template,
+                    &app.app.properties.command_template,
                     &input_str,
                     cwd,
                     output_paths.tmp_dir.clone(),
@@ -510,7 +518,7 @@ fn create_run_commands<'a>(
 fn test_id_to_input(
     test_id: &TestId,
     input_paths: &config::InputPaths,
-    app_properties: &config::AppProperties,
+    app: &config::App,
 ) -> (String, String) {
     if let Some(rel_path) = &test_id.rel_path {
         let full_path = input_paths.testcases_root.join(&rel_path);
@@ -521,7 +529,7 @@ fn test_id_to_input(
                 full_path.to_str().unwrap().to_string(),
                 full_path.to_str().unwrap().to_string(),
             )
-        } else if let Some(cwd) = &app_properties.cwd {
+        } else if let Some(cwd) = &app.layout.cwd {
             // cncsim case
             (full_path.to_str().unwrap().to_string(), cwd.clone())
         } else {
@@ -534,7 +542,7 @@ fn test_id_to_input(
         // gtest case
         (
             test_id.id.clone(),
-            app_properties
+            app.layout
                 .cwd
                 .clone()
                 .expect("You need to specify a CWD for gtests (see preset)."),
@@ -619,7 +627,13 @@ impl<'a> TestInstance<'a> {
             Ok(output) => output,
             Err(e) => {
                 println!(
-                    "ERROR: failed to run test command!\n  command: {:?}\n  cwd: {}  \n  error: {}\n\nDid you forget to build?",
+                    "
+ERROR: failed to run test command!
+  command: {:?}
+  cwd: {}
+  error: {}
+
+Did you forget to build?",
                     &self.command.command, &self.command.cwd, e
                 );
                 std::process::exit(-1);
@@ -675,10 +689,10 @@ fn test_apps_from_args(
         .values_of("test_app")
         .unwrap()
         .map(|app_name| {
-            let config = match input_paths.app_properties.get(app_name) {
-                Some(config) => config,
+            let app = match input_paths.apps.get(app_name) {
+                Some(app) => app,
                 None => {
-                    let app_names = input_paths.app_properties.app_names();
+                    let app_names = input_paths.apps.app_names();
                     println!(
                         "ERROR: \"{}\" not found: must be one of {:?}",
                         app_name, app_names
@@ -690,8 +704,8 @@ fn test_apps_from_args(
             let test_groups = test_group_file.get(app_name).unwrap_or(&empty_vec);
             AppWithTests {
                 name: app_name.to_string(),
-                config: config.clone(),
-                tests: populate_test_groups(config, input_paths, &test_groups, &id_filter),
+                app: (*app).clone(),
+                tests: populate_test_groups(&app, input_paths, &test_groups, &id_filter),
             }
         })
         .filter(|app_with_tests| !app_with_tests.tests.is_empty())
@@ -703,7 +717,7 @@ fn test_apps_from_args(
 }
 
 fn populate_test_groups(
-    test_config: &config::AppProperties,
+    app: &config::App,
     input_paths: &config::InputPaths,
     test_groups: &[config::TestGroup],
     id_filter: &Fn(&str) -> bool,
@@ -713,7 +727,7 @@ fn populate_test_groups(
         .map(|test_group| GroupWithTests {
             test_group: test_group.clone(),
             test_ids: test_group
-                .generate_test_inputs(&test_config, &input_paths)
+                .generate_test_inputs(&app, &input_paths)
                 .into_iter()
                 .filter(|f| id_filter(&f.id))
                 .collect(),
