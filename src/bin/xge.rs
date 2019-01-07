@@ -1,5 +1,5 @@
-extern crate serde_json;
-extern crate xge_lib;
+use serde_json;
+use xge_lib;
 
 use std::alloc::System;
 use std::env;

@@ -245,7 +245,7 @@ struct FileLogger<'a> {
     files: HashMap<&'a str, File>,
 }
 impl<'a> FileLogger<'a> {
-    fn new(log_dir: &Path) -> FileLogger {
+    fn new(log_dir: &Path) -> FileLogger<'_> {
         FileLogger {
             log_dir: log_dir.to_path_buf(),
             files: HashMap::new(),

@@ -35,7 +35,7 @@ impl Apps {
         properties_path: &Path,
         build_layout_path: &Path,
         build_dir: &Path,
-    ) -> Result<Apps, Box<std::error::Error>> {
+    ) -> Result<Apps, Box<dyn std::error::Error>> {
         let properties: AppPropertiesFile = serde_json::from_reader(File::open(properties_path)?)?;
         let layout: BuildLayoutFile = serde_json::from_reader(File::open(build_layout_path)?)?;
         let apps = layout
@@ -104,7 +104,7 @@ fn apply_build_dir(app_layout: &mut AppLayout, build_dir: &Path) {
 #[derive(Debug, Deserialize)]
 pub struct TestGroupFile(HashMap<String, Vec<TestGroup>>);
 impl TestGroupFile {
-    pub fn open(path: &Path) -> Result<TestGroupFile, Box<std::error::Error>> {
+    pub fn open(path: &Path) -> Result<TestGroupFile, Box<dyn std::error::Error>> {
         let file = File::open(path)?;
         let content = serde_json::from_reader(file)?;
         Ok(content)

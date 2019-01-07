@@ -228,7 +228,7 @@ fn cmd_run(
 
 fn run_in_scope<'scope>(
     scope: &scoped_threadpool::Scope<'_, 'scope>,
-    tests: &'scope [TestInstanceCreator],
+    tests: &'scope [TestInstanceCreator<'_>],
     input_paths: &'scope config::InputPaths,
     output_paths: &'scope OutputPaths,
     run_config: &'scope RunConfig,
@@ -242,7 +242,7 @@ fn run_in_scope<'scope>(
     let mut n = tests.len() * run_config.repeat;
 
     let (tx, rx) = mpsc::channel();
-    let (xge_tx, xge_rx) = mpsc::channel::<TestInstance>();
+    let (xge_tx, xge_rx) = mpsc::channel::<TestInstance<'_>>();
     if run_config.xge {
         launch_xge_management_threads(scope, xge_rx, &tx, &output_paths);
     }
@@ -331,7 +331,7 @@ impl RunCount {
         }
     }
 }
-fn report_and_check_runs(run_counts: &HashMap<TestUid, RunCount>, run_config: &RunConfig) -> bool {
+fn report_and_check_runs(run_counts: &HashMap<TestUid<'_>, RunCount>, run_config: &RunConfig) -> bool {
     let mut failed: Vec<String> = run_counts
         .iter()
         .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
@@ -391,7 +391,7 @@ fn launch_xge_management_threads<'pool, 'scope>(
 ) {
     let tx = tx.clone();
     let (mut xge_writer, xge_reader) = xge_lib::xge();
-    let issued_commands: Arc<Mutex<Vec<TestInstance>>> = Arc::new(Mutex::new(Vec::new()));
+    let issued_commands: Arc<Mutex<Vec<TestInstance<'_>>>> = Arc::new(Mutex::new(Vec::new()));
     let issued_commands2 = issued_commands.clone();
     scope.execute(move || {
         for test_instance in xge_rx.iter() {
@@ -479,7 +479,7 @@ pub struct TestCommand {
     cwd: String,
     pub tmp_path: Option<PathBuf>,
 }
-type CommandGenerator = Fn() -> TestCommand;
+type CommandGenerator = dyn Fn() -> TestCommand;
 
 #[derive(Debug, Clone)]
 pub struct TestCommandResult {
@@ -666,7 +666,7 @@ Did you forget to build?",
 }
 
 fn test_apps_from_args(
-    args: &clap::ArgMatches,
+    args: &clap::ArgMatches<'_>,
     input_paths: &config::InputPaths,
     test_group_file: &config::TestGroupFile,
 ) -> Vec<AppWithTests> {
@@ -720,7 +720,7 @@ fn populate_test_groups(
     app: &config::App,
     input_paths: &config::InputPaths,
     test_groups: &[config::TestGroup],
-    id_filter: &Fn(&str) -> bool,
+    id_filter: &dyn Fn(&str) -> bool,
 ) -> Vec<GroupWithTests> {
     test_groups
         .iter()
