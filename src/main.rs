@@ -169,7 +169,7 @@ fn cmd_build(test_names: &[&str], input_paths: &config::InputPaths) {
     let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
     for (name, dep) in test_names
         .iter()
-        .map(|n| (n.clone(), &input_paths.apps.get(*n).unwrap().layout))
+        .map(|n| (n, &input_paths.apps.get(*n).unwrap().layout))
     {
         if dep.solution.is_none() || dep.project.is_none() {
             println!("ERROR: no solution/project defined for {}", name);
@@ -331,7 +331,10 @@ impl RunCount {
         }
     }
 }
-fn report_and_check_runs(run_counts: &HashMap<TestUid<'_>, RunCount>, run_config: &RunConfig) -> bool {
+fn report_and_check_runs(
+    run_counts: &HashMap<TestUid<'_>, RunCount>,
+    run_config: &RunConfig,
+) -> bool {
     let mut failed: Vec<String> = run_counts
         .iter()
         .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
