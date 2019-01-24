@@ -126,23 +126,6 @@ fn main() {
             out_dir: out_dir.clone(),
             tmp_dir: out_dir.join("tmp"),
         };
-        if Path::exists(&output_paths.out_dir) {
-            if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
-                println!(
-                    "ERROR: can't reset the output directory: {:?}.\n It doesn't look like it \
-                     was created by mwtest. Please select another one or delete it manually.",
-                    &output_paths.out_dir
-                );
-                std::process::exit(-1);
-            }
-            std::fs::remove_dir_all(&output_paths.out_dir)
-                .expect("could not clean up tmp directory!");
-        }
-        std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
-        println!(
-            "Test artifacts will be written to {}.",
-            output_paths.out_dir.to_str().unwrap()
-        );
         let run_config = RunConfig {
             verbose: matches.is_present("verbose"),
             parallel: matches.is_present("threadpool"),
@@ -213,6 +196,23 @@ fn cmd_run(
     output_paths: &OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
+    if Path::exists(&output_paths.out_dir) {
+        if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
+            println!(
+                "ERROR: can't reset the output directory: {:?}.\n It doesn't look like it \
+                 was created by mwtest. Please select another one or delete it manually.",
+                &output_paths.out_dir
+            );
+            std::process::exit(-1);
+        }
+        std::fs::remove_dir_all(&output_paths.out_dir).expect("could not clean up tmp directory!");
+    }
+    std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
+    println!(
+        "Test artifacts will be written to {}.",
+        output_paths.out_dir.to_str().unwrap()
+    );
+
     let tests = create_run_commands(&input_paths, &test_apps, &output_paths);
 
     let n_workers = if run_config.parallel {
@@ -294,7 +294,7 @@ fn run_in_scope<'scope>(
 
     drop(report);
 
-    report_and_check_runs(&run_counts, &run_config)
+    report_and_check_runs(&run_counts)
 }
 
 fn run_test_instance<'scope>(
@@ -331,23 +331,21 @@ impl RunCount {
         }
     }
 }
-fn report_and_check_runs(
-    run_counts: &HashMap<TestUid<'_>, RunCount>,
-    run_config: &RunConfig,
-) -> bool {
+fn report_and_check_runs(run_counts: &HashMap<TestUid<'_>, RunCount>) -> bool {
+    let test_formatter = |(id, run_counts): (&TestUid<'_>, &RunCount)| {
+        if run_counts.n_runs > 1 {
+            format!(
+                "  {} --id {} (succeeded {} out of {} runs)",
+                id.0, id.1, run_counts.n_successes, run_counts.n_runs
+            )
+        } else {
+            format!("  {} --id {}", id.0, id.1)
+        }
+    };
     let mut failed: Vec<String> = run_counts
         .iter()
-        .filter(|(_id, run_counts)| run_counts.n_successes < run_config.repeat)
-        .map(|(id, run_counts)| {
-            if run_counts.n_runs > 1 {
-                format!(
-                    "failed: {} --id {} (succeeded {} out of {} runs)",
-                    id.0, id.1, run_counts.n_successes, run_counts.n_runs
-                )
-            } else {
-                format!("failed: {} --id {}", id.0, id.1)
-            }
-        })
+        .filter(|(_id, run_counts)| run_counts.n_successes == 0)
+        .map(test_formatter)
         .collect();
     failed.sort_unstable();
     let all_succeeded = failed.is_empty();
@@ -357,25 +355,23 @@ fn report_and_check_runs(
         .filter(|(_id, run_counts)| {
             run_counts.n_successes > 0 && run_counts.n_successes < run_counts.n_runs
         })
-        .map(|(id, run_counts)| {
-            if run_counts.n_runs > 1 {
-                format!(
-                    "instable: {} --id {} (succeeded {} out of {} runs)",
-                    id.0, id.1, run_counts.n_successes, run_counts.n_runs
-                )
-            } else {
-                format!("instable: {} --id {}", id.0, id.1)
-            }
-        })
+        .map(test_formatter)
         .collect();
     instable.sort_unstable();
     let none_instable = instable.is_empty();
 
-    for t in failed {
-        println!("{}", t);
+    if !none_instable {
+        println!("Tests that are instable: ");
+        for t in instable {
+            println!("{}", t);
+        }
     }
-    for t in instable {
-        println!("{}", t);
+
+    if !all_succeeded {
+        println!("Tests that failed: ");
+        for t in failed {
+            println!("{}", t);
+        }
     }
 
     if all_succeeded && none_instable {
@@ -673,25 +669,12 @@ fn test_apps_from_args(
     input_paths: &config::InputPaths,
     test_group_file: &config::TestGroupFile,
 ) -> Vec<AppWithTests> {
-    let filter_tokens: Option<Vec<&str>> = args.values_of("filter").map(|v| v.collect());
-    let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
-    let id_token = args.value_of("id").map(|v| normalize(v));
-    let id_filter = |input: &str| {
-        let input = normalize(input);
-        if let Some(filters) = &filter_tokens {
-            filters
-                .iter()
-                .any(|f| input.contains(normalize(f).as_str()))
-        } else if let Some(id) = &id_token {
-            input == *id
-        } else {
-            true
-        }
-    };
+    let id_filter = id_filter_from_args(args);
     let apps: Vec<AppWithTests> = args
         .values_of("test_app")
         .unwrap()
         .map(|app_name| {
+            // get app for string from command line
             let app = match input_paths.apps.get(app_name) {
                 Some(app) => app,
                 None => {
@@ -703,12 +686,14 @@ fn test_apps_from_args(
                     std::process::exit(-1);
                 }
             };
+
+            // populate with tests
             let empty_vec = vec![];
             let test_groups = test_group_file.get(app_name).unwrap_or(&empty_vec);
             AppWithTests {
                 name: app_name.to_string(),
                 app: (*app).clone(),
-                tests: populate_test_groups(&app, input_paths, &test_groups, &id_filter),
+                tests: populate_test_groups(&app, input_paths, &test_groups, &*id_filter),
             }
         })
         .filter(|app_with_tests| !app_with_tests.tests.is_empty())
@@ -717,6 +702,26 @@ fn test_apps_from_args(
         println!("WARNING: you have not selected any tests.");
     }
     apps
+}
+
+fn id_filter_from_args(args: &clap::ArgMatches<'_>) -> Box<Fn(&str) -> bool> {
+    let filter_tokens: Option<Vec<String>> = args
+        .values_of("filter")
+        .map(|v| v.map(String::from).collect());
+    let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
+    let id_token = args.value_of("id").map(|v| normalize(v).to_string());
+    Box::new(move |input: &str| {
+        let input = normalize(input);
+        if let Some(filters) = &filter_tokens {
+            filters
+                .iter()
+                .any(|f| input.contains(normalize(f).as_str()))
+        } else if let Some(id) = &id_token {
+            input == *id
+        } else {
+            true
+        }
+    })
 }
 
 fn populate_test_groups(
