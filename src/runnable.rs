@@ -31,6 +31,42 @@ pub fn create_run_commands<'a>(
     tests
 }
 
+pub struct TestInstanceCreator<'a> {
+    app_name: &'a str,
+    test_id: &'a TestId,
+    allow_xge: bool,
+    command_generator: Box<CommandGenerator>,
+}
+impl<'a> TestInstanceCreator<'a> {
+    pub fn instantiate(&self) -> TestInstance<'a> {
+        TestInstance {
+            app_name: self.app_name,
+            test_id: self.test_id,
+            allow_xge: self.allow_xge,
+            command: (self.command_generator)(),
+        }
+    }
+    pub fn get_uid(&self) -> TestUid<'a> {
+        (self.app_name, &self.test_id.id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TestInstance<'a> {
+    pub app_name: &'a str,
+    pub test_id: &'a TestId,
+    pub allow_xge: bool,
+    pub command: TestCommand,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestCommand {
+    pub command: Vec<String>,
+    pub cwd: String,
+    pub tmp_path: Option<PathBuf>,
+}
+type CommandGenerator = dyn Fn() -> TestCommand;
+
 fn test_id_to_input(
     test_id: &TestId,
     input_paths: &config::InputPaths,
@@ -104,39 +140,3 @@ fn test_command_generator(
         })
     }
 }
-
-pub struct TestInstanceCreator<'a> {
-    app_name: &'a str,
-    test_id: &'a TestId,
-    allow_xge: bool,
-    command_generator: Box<CommandGenerator>,
-}
-impl<'a> TestInstanceCreator<'a> {
-    pub fn instantiate(&self) -> TestInstance<'a> {
-        TestInstance {
-            app_name: self.app_name,
-            test_id: self.test_id,
-            allow_xge: self.allow_xge,
-            command: (self.command_generator)(),
-        }
-    }
-    pub fn get_uid(&self) -> TestUid<'a> {
-        (self.app_name, &self.test_id.id)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TestInstance<'a> {
-    pub app_name: &'a str,
-    pub test_id: &'a TestId,
-    pub allow_xge: bool,
-    pub command: TestCommand,
-}
-
-#[derive(Debug, Clone)]
-pub struct TestCommand {
-    pub command: Vec<String>,
-    pub cwd: String,
-    pub tmp_path: Option<PathBuf>,
-}
-type CommandGenerator = dyn Fn() -> TestCommand;
