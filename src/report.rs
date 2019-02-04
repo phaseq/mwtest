@@ -1,3 +1,5 @@
+use crate::runnable;
+use crate::scheduler;
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -25,8 +27,8 @@ impl<'a> Report<'a> {
         &mut self,
         i: usize,
         n: usize,
-        test_instance: crate::TestInstance<'a>,
-        test_result: &crate::TestCommandResult,
+        test_instance: runnable::TestInstance<'a>,
+        test_result: &scheduler::TestCommandResult,
     ) {
         self.std_out.add(
             i,
@@ -43,7 +45,7 @@ impl<'a> Report<'a> {
 
 struct XmlReport<'a> {
     file: File,
-    results: HashMap<String, Vec<(crate::TestInstance<'a>, crate::TestCommandResult)>>,
+    results: HashMap<String, Vec<(runnable::TestInstance<'a>, scheduler::TestCommandResult)>>,
     artifacts_root: PathBuf,
     testcases_root: PathBuf,
 }
@@ -63,8 +65,8 @@ impl<'a> XmlReport<'a> {
 
     fn add(
         &mut self,
-        test_instance: crate::TestInstance<'a>,
-        test_result: &crate::TestCommandResult,
+        test_instance: runnable::TestInstance<'a>,
+        test_result: &scheduler::TestCommandResult,
     ) {
         match self.results.entry(test_instance.app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
@@ -108,8 +110,8 @@ impl<'a> XmlReport<'a> {
     fn write_testcase(
         &self,
         out: &mut BufWriter<&File>,
-        test_instance: &crate::TestInstance<'a>,
-        command_result: &crate::TestCommandResult,
+        test_instance: &runnable::TestInstance<'a>,
+        command_result: &scheduler::TestCommandResult,
     ) -> std::io::Result<()> {
         out.write_all(
             format!(
@@ -213,7 +215,7 @@ impl CliLogger {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
-    fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &crate::TestCommandResult) {
+    fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &scheduler::TestCommandResult) {
         let ok_or_failed = if result.exit_code == 0 {
             "Ok"
         } else {
