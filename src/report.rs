@@ -15,7 +15,7 @@ impl<'a> Report<'a> {
     pub fn new(artifacts_root: &'a Path, testcases_root: &str, verbose: bool) -> Report<'a> {
         let xml_location = &artifacts_root.join("results.xml");
         let report = Report {
-            std_out: CliLogger { verbose },
+            std_out: CliLogger::create(verbose),
             file_logger: FileLogger::new(&artifacts_root),
             xml_report: XmlReport::create(&xml_location, &artifacts_root, &testcases_root).unwrap(),
         };
@@ -209,30 +209,45 @@ impl<'a> Drop for XmlReport<'a> {
 
 struct CliLogger {
     verbose: bool,
+    term_width: Option<usize>,
 }
 impl CliLogger {
+    fn create(verbose: bool) -> CliLogger {
+        CliLogger {
+            verbose,
+            term_width: term_size::dimensions_stdout().map(|(w, _h)| w),
+        }
+    }
     fn init(&self) {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
     fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &scheduler::TestCommandResult) {
+        // generate progress message
         let ok_or_failed = if result.exit_code == 0 {
             "Ok"
         } else {
             "Failed"
         };
         let mut line = format!("[{}/{}] {}: {} --id \"{}\"", i, n, ok_or_failed, &name, &id);
-        if let Some((width, _)) = term_size::dimensions() {
+
+        // keep replacing OK message (only) when printing to a TTY
+        if let Some(width) = self.term_width {
             line.truncate(width);
             print!("\r{:width$}", line, width = width);
         } else {
             println!("{}", line);
         }
 
+        // print full test output if requested
         if result.exit_code != 0 || self.verbose {
             println!("\n{}\n", &result.stdout.trim());
         }
-        std::io::stdout().flush().unwrap();
+
+        // flush if a TTY is attached
+        if self.term_width.is_some() {
+            std::io::stdout().flush().unwrap();
+        }
     }
 }
 impl Drop for CliLogger {
