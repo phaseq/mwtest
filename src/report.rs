@@ -225,6 +225,8 @@ impl CliLogger {
         if let Some((width, _)) = term_size::dimensions() {
             line.truncate(width);
             print!("\r{:width$}", line, width = width);
+        } else {
+            println!("{}", line);
         }
 
         if result.exit_code != 0 || self.verbose {
