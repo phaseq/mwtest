@@ -212,6 +212,10 @@ fn cmd_run(
     );
 
     let tests = runnable::create_run_commands(&input_paths, &test_apps, &output_paths);
+    if tests.is_empty() {
+        println!("WARNING: No tests were selected.");
+        std::process::exit(0); // counts as success
+    }
     scheduler::run(&input_paths, &tests, &output_paths, &run_config)
 }
 

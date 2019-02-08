@@ -221,13 +221,12 @@ impl CliLogger {
         } else {
             "Failed"
         };
-        let mut line = format!(
-            "\r[{}/{}] {}: {} --id \"{}\"",
-            i, n, ok_or_failed, &name, &id
-        );
-        let (width, _) = term_size::dimensions().unwrap();
-        line.truncate(width);
-        print!("{:width$}", line, width = width);
+        let mut line = format!("[{}/{}] {}: {} --id \"{}\"", i, n, ok_or_failed, &name, &id);
+        if let Some((width, _)) = term_size::dimensions() {
+            line.truncate(width);
+            print!("\r{:width$}", line, width = width);
+        }
+
         if result.exit_code != 0 || self.verbose {
             println!("\n{}\n", &result.stdout.trim());
         }

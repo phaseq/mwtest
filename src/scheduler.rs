@@ -17,14 +17,14 @@ pub struct RunConfig {
 
 pub fn run<'a>(
     input_paths: &config::InputPaths,
-    tests: &Vec<TestInstanceCreator<'a>>,
+    tests: &[TestInstanceCreator<'a>],
     output_paths: &crate::OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
     let n_workers = if run_config.parallel {
         num_cpus::get()
     } else if run_config.xge {
-        2 + num_cpus::get()
+        2 + num_cpus::get() // +2 for management threads
     } else {
         1
     };
