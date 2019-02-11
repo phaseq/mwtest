@@ -6,7 +6,7 @@
   "machsim": {
     "exe": "machsimtest.exe"
   },
-  "eo": {
+  "exactoutput": {
     "exe": "exactoutputBT.exe",
     "cwd": "."
   },

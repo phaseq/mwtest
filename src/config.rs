@@ -102,7 +102,7 @@ fn apply_build_dir(app_layout: &mut AppLayout, build_dir: &Path) {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TestGroupFile(HashMap<String, Vec<TestGroup>>);
+pub struct TestGroupFile(HashMap<String, TestGroups>);
 impl TestGroupFile {
     pub fn open(path: &Path) -> Result<TestGroupFile, Box<dyn std::error::Error>> {
         let file = File::open(path)?;
@@ -110,35 +110,62 @@ impl TestGroupFile {
         Ok(content)
     }
 
-    pub fn get(&self, app_name: &str) -> Option<&Vec<TestGroup>> {
+    pub fn get(&self, app_name: &str) -> Option<&TestGroups> {
         self.0.get(app_name)
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TestGroup {
-    pub find_glob: Option<String>,
-    pub find_gtest: Option<Vec<String>>,
+pub struct TestGroups {
     pub id_pattern: String,
-    #[serde(default = "true_value")]
-    pub xge: bool,
+    pub groups: Vec<TestGroup>,
 }
-impl TestGroup {
-    pub fn generate_test_inputs(&self, app: &App, input_paths: &InputPaths) -> Vec<crate::TestId> {
-        if self.find_glob.is_some() {
-            self.generate_path_inputs(&app.properties, &input_paths)
-        } else if self.find_gtest.is_some() {
-            self.generate_gtest_inputs(&app)
+impl TestGroups {
+    pub fn generate_test_inputs(
+        &self,
+        group: &TestGroup,
+        app: &App,
+        input_paths: &InputPaths,
+    ) -> Vec<crate::TestId> {
+        if group.find_glob.is_some() {
+            group.generate_path_inputs(&app.properties, &input_paths, &self.id_pattern)
+        } else if group.find_gtest.is_some() {
+            group.generate_gtest_inputs(&app)
         } else {
             panic!("no test generator defined!");
         }
     }
+}
+
+/*
+"verifier": {
+  "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini",
+  "groups": [
+    {
+      "find_glob": "cutsim/_servertest/verifier/smoke/**/*.verytest.ini"
+    },
+    {
+      "find_glob": "cutsim/_servertest/verifier/nightly/**/*.verytest.ini"
+    }
+  ]
+},*/
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestGroup {
+    find_glob: Option<String>,
+    find_gtest: Option<String>,
+    #[serde(default = "true_value")]
+    pub xge: bool,
+    pub timeout: Option<f32>,
+}
+impl TestGroup {
     fn generate_path_inputs(
         &self,
         test_config: &AppProperties,
         input_paths: &InputPaths,
+        id_pattern: &str,
     ) -> Vec<crate::TestId> {
-        let re = regex::Regex::new(&self.id_pattern).unwrap();
+        let re = regex::Regex::new(&id_pattern).unwrap();
         let abs_path = input_paths
             .testcases_root
             .join(self.find_glob.clone().unwrap())
@@ -168,7 +195,7 @@ impl TestGroup {
                     None => {
                         println!(
                             "pattern did not match on one of the tests!\n pattern: {}\n test: {}",
-                            &self.id_pattern, &rel_path
+                            &id_pattern, &rel_path
                         );
                         std::process::exit(-1);
                     }
@@ -190,7 +217,7 @@ impl TestGroup {
             std::process::exit(-1);
         }
         let output = std::process::Command::new(&app.layout.exe)
-            .args(filter[1..].iter())
+            .arg(format!("--gtest_filter={}", filter))
             .output()
             .expect("failed to gather tests!");
         let output: &str = std::str::from_utf8(&output.stdout)

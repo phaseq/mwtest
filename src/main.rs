@@ -275,12 +275,16 @@ fn test_apps_from_args(
             };
 
             // populate with tests
-            let empty_vec = vec![];
-            let test_groups = test_group_file.get(app_name).unwrap_or(&empty_vec);
+            let tests = test_group_file
+                .get(app_name)
+                .map(|test_groups| {
+                    populate_test_groups(&app, input_paths, test_groups, &*id_filter)
+                })
+                .unwrap_or_else(|| vec![]);
             AppWithTests {
                 name: app_name.to_string(),
                 app: (*app).clone(),
-                tests: populate_test_groups(&app, input_paths, &test_groups, &*id_filter),
+                tests,
             }
         })
         .filter(|app_with_tests| !app_with_tests.tests.is_empty())
@@ -314,15 +318,16 @@ fn id_filter_from_args(args: &clap::ArgMatches<'_>) -> Box<Fn(&str) -> bool> {
 fn populate_test_groups(
     app: &config::App,
     input_paths: &config::InputPaths,
-    test_groups: &[config::TestGroup],
+    test_groups: &config::TestGroups,
     id_filter: &dyn Fn(&str) -> bool,
 ) -> Vec<GroupWithTests> {
     test_groups
+        .groups
         .iter()
         .map(|test_group| GroupWithTests {
             test_group: test_group.clone(),
-            test_ids: test_group
-                .generate_test_inputs(&app, &input_paths)
+            test_ids: test_groups
+                .generate_test_inputs(&test_group, &app, &input_paths)
                 .into_iter()
                 .filter(|f| id_filter(&f.id))
                 .collect(),

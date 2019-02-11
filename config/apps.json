@@ -45,7 +45,7 @@
       "{{tmp_path}}"
     ]
   },
-  "eo": {
+  "exactoutput": {
     "command_template": [
       "{{exe}}",
       "-binFile:{{input}}",

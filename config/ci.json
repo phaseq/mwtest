@@ -1,90 +1,115 @@
 {
-  "verifier": [
-    {
-      "find_glob": "cutsim/_servertest/verifier/smoke/**/*.verytest.ini",
-      "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini"
-    }
-  ],
-  "verifierUnit": [
-    {
-      "find_gtest": [
-        "{{exe}}",
-        "--gtest_list_tests",
-        "--gtest_filter=*-*Nightly*:*RunLocal*"
-      ],
-      "id_pattern": "(.*)"
-    },
-    {
-      "find_gtest": [
-        "{{exe}}",
-        "--gtest_list_tests",
-        "--gtest_filter=*RunLocal*-*Nightly*"
-      ],
-      "id_pattern": "(.*)",
-      "xge": false
-    }
-  ],
-  "verifierApi": [
-    {
-      "find_gtest": [
-        "{{exe}}",
-        "--gtest_list_tests",
-        "--gtest_filter=*-*Nightly*:*RunLocal*"
-      ],
-      "id_pattern": "(.*)"
-    },
-    {
-      "find_gtest": [
-        "{{exe}}",
-        "--gtest_list_tests",
-        "--gtest_filter=*RunLocal*-*Nightly*"
-      ],
-      "id_pattern": "(.*)",
-      "xge": false
-    }
-  ],
-  "machsim": [
-    {
-      "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
-      "id_pattern": "machsim/MachSimTestCases/(.*)"
-    }
-  ],
-  "cncsim": [
-    {
-      "find_glob": "cncsim/ReferenceFiles/GeneratedCNCFiles/**/*.cnclog",
-      "id_pattern": "cncsim/ReferenceFiles/(.*)"
-    },
-    {
-      "find_glob": "cncsim/TestCases/**/*.cnclog",
-      "id_pattern": "cncsim/TestCases/(.*)"
-    },
-    {
-      "find_glob": "cncsim/CNCSimReferenceFiles/**/*.cnclog",
-      "id_pattern": "cncsim/CNCSimReferenceFiles/(.*)"
-    }
-  ],
-  "eo": [
-    {
-      "find_glob": "5axis/binfiles/**/*.bin",
-      "id_pattern": "5axis/binfiles/(.*).bin"
-    }
-  ],
-  "mxp": [
-    {
-      "find_glob": "5axis/MXPfiles/*.mxp",
-      "id_pattern": "5axis/MXPfiles/(.*).mxp"
-    }
-  ],
-  "cuttercompensation": [
-    {
-      "find_glob": "5axis/CutterCompensationTests/*.cc",
-      "id_pattern": "5axis/CutterCompensationTests/(.*).cc"
-    }
-  ],
-  "collisionchecker": [
-    {
-      "find_glob": "CollisionChecker/CollisionCheckerTestCases/smoke/**/*.col",
-      "id_pattern": "CollisionChecker/CollisionCheckerTestCases/(.*).col"
-    }
-  ]
+  "verifier": {
+    "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini",
+    "groups": [
+      {
+        "find_glob": "cutsim/_servertest/verifier/smoke/**/*.verytest.ini",
+        "timeout": 60
+      }
+    ]
+  },
+  "verifierUnit": {
+    "id_pattern": "(.*)",
+    "groups": [
+      {
+        "find_gtest": "*-*Nightly*:*RunLocal*"
+      },
+      {
+        "find_gtest": "*RunLocal*-*Nightly*",
+        "xge": false
+      }
+    ]
+  },
+  "verifierApi": {
+    "id_pattern": "(.*)",
+    "groups": [
+      {
+        "find_gtest": "*-*Nightly*:*RunLocal*"
+      },
+      {
+        "find_gtest": "*RunLocal*-*Nightly*",
+        "xge": false
+      }
+    ]
+  },
+  "stockmanager": {
+    "id_pattern": "cutsim/_servertest/stockmanager/(.*).ini",
+    "groups": [
+      {
+        "find_glob": "cutsim/_servertest/stockmanager/smoke/**/*.ini"
+      }
+    ]
+  },
+  "machsim": {
+    "id_pattern": "machsim/MachSimTestCases/(.*)",
+    "groups": [
+      {
+        "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
+        "timeout": 300
+      }
+    ]
+  },
+  "cncsim": {
+    "id_pattern": "cncsim/(.*)",
+    "groups": [
+      {
+        "find_glob": "cncsim/ReferenceFiles/GeneratedCNCFiles/**/*.cnclog"
+      },
+      {
+        "find_glob": "cncsim/TestCases/**/*.cnclog"
+      },
+      {
+        "find_glob": "cncsim/CNCSimReferenceFiles/**/*.cnclog"
+      }
+    ]
+  },
+  "cncsimUnit": {
+    "id_pattern": "(.*)",
+    "groups": [
+      {
+        "find_gtest": "*"
+      }
+    ]
+  },
+  "exactoutput": {
+    "id_pattern": "5axis/binfiles/(.*).bin",
+    "groups": [
+      {
+        "find_glob": "5axis/binfiles/**/*.bin",
+        "timeout": 120
+      }
+    ]
+  },
+  "mxp": {
+    "id_pattern": "5axis/MXPfiles/(.*).mxp",
+    "groups": [
+      {
+        "find_glob": "5axis/MXPfiles/*.mxp"
+      }
+    ]
+  },
+  "cuttercompensation": {
+    "id_pattern": "5axis/CutterCompensationTests/(.*).cc",
+    "groups": [
+      {
+        "find_glob": "5axis/CutterCompensationTests/*.cc"
+      }
+    ]
+  },
+  "collisionchecker": {
+    "id_pattern": "CollisionChecker/CollisionCheckerTestCases/(.*).col",
+    "groups": [
+      {
+        "find_glob": "CollisionChecker/CollisionCheckerTestCases/smoke/**/*.col"
+      }
+    ]
+  },
+  "cadcam": {
+    "id_pattern": "(.*)",
+    "groups": [
+      {
+        "find_gtest": "*"
+      }
+    ]
+  }
 }
