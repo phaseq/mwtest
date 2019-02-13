@@ -1,5 +1,5 @@
 use crate::config;
-use crate::{TestId, TestUid};
+use crate::TestId;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -7,8 +7,8 @@ pub fn create_run_commands<'a>(
     input_paths: &config::InputPaths,
     test_apps: &'a [crate::AppWithTests],
     output_paths: &crate::OutputPaths,
-) -> Vec<TestInstanceCreator<'a>> {
-    let mut tests: Vec<TestInstanceCreator<'a>> = Vec::new();
+) -> Vec<TestInstanceCreator> {
+    let mut tests: Vec<TestInstanceCreator> = Vec::new();
     for app in test_apps {
         for group in &app.tests {
             for test_id in &group.test_ids {
@@ -20,9 +20,10 @@ pub fn create_run_commands<'a>(
                     output_paths.tmp_dir.clone(),
                 );
                 tests.push(TestInstanceCreator {
-                    app_name: &app.name,
-                    test_id: &test_id,
+                    app_name: app.name.clone(),
+                    test_id: test_id.clone(),
                     allow_xge: group.test_group.xge,
+                    timeout: group.test_group.timeout,
                     command_generator: generator,
                 });
             }
@@ -31,31 +32,32 @@ pub fn create_run_commands<'a>(
     tests
 }
 
-pub struct TestInstanceCreator<'a> {
-    app_name: &'a str,
-    test_id: &'a TestId,
-    allow_xge: bool,
+pub struct TestInstanceCreator {
+    app_name: String,
+    test_id: TestId,
+    pub allow_xge: bool,
+    timeout: Option<f32>,
     command_generator: Box<CommandGenerator>,
 }
-impl<'a> TestInstanceCreator<'a> {
-    pub fn instantiate(&self) -> TestInstance<'a> {
+unsafe impl Sync for TestInstanceCreator {}
+impl TestInstanceCreator {
+    pub fn instantiate(&self) -> TestInstance {
         TestInstance {
-            app_name: self.app_name,
-            test_id: self.test_id,
+            app_name: self.app_name.clone(),
+            test_id: self.test_id.clone(),
             allow_xge: self.allow_xge,
+            timeout: self.timeout,
             command: (self.command_generator)(),
         }
-    }
-    pub fn get_uid(&self) -> TestUid<'a> {
-        (self.app_name, &self.test_id.id)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct TestInstance<'a> {
-    pub app_name: &'a str,
-    pub test_id: &'a TestId,
+pub struct TestInstance {
+    pub app_name: String,
+    pub test_id: TestId,
     pub allow_xge: bool,
+    pub timeout: Option<f32>,
     pub command: TestCommand,
 }
 
@@ -65,7 +67,7 @@ pub struct TestCommand {
     pub cwd: String,
     pub tmp_path: Option<PathBuf>,
 }
-type CommandGenerator = dyn Fn() -> TestCommand;
+type CommandGenerator = dyn Fn() -> TestCommand + Sync + Send;
 
 fn test_id_to_input(
     test_id: &TestId,

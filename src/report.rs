@@ -6,13 +6,13 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-pub struct Report<'a> {
+pub struct Report {
     std_out: CliLogger,
-    file_logger: FileLogger<'a>,
-    xml_report: XmlReport<'a>,
+    file_logger: FileLogger,
+    xml_report: XmlReport,
 }
-impl<'a> Report<'a> {
-    pub fn new(artifacts_root: &'a Path, testcases_root: &str, verbose: bool) -> Report<'a> {
+impl Report {
+    pub fn new(artifacts_root: &Path, testcases_root: &str, verbose: bool) -> Report {
         let xml_location = &artifacts_root.join("results.xml");
         let report = Report {
             std_out: CliLogger::create(verbose),
@@ -27,7 +27,7 @@ impl<'a> Report<'a> {
         &mut self,
         i: usize,
         n: usize,
-        test_instance: runnable::TestInstance<'a>,
+        test_instance: runnable::TestInstance,
         test_result: &scheduler::TestCommandResult,
     ) {
         self.std_out.add(
@@ -43,18 +43,18 @@ impl<'a> Report<'a> {
     }
 }
 
-struct XmlReport<'a> {
+struct XmlReport {
     file: File,
-    results: HashMap<String, Vec<(runnable::TestInstance<'a>, scheduler::TestCommandResult)>>,
+    results: HashMap<String, Vec<(runnable::TestInstance, scheduler::TestCommandResult)>>,
     artifacts_root: PathBuf,
     testcases_root: PathBuf,
 }
-impl<'a> XmlReport<'a> {
+impl XmlReport {
     fn create(
         path: &Path,
         artifacts_root: &Path,
         testcases_root: &str,
-    ) -> std::io::Result<XmlReport<'a>> {
+    ) -> std::io::Result<XmlReport> {
         Ok(XmlReport {
             file: File::create(&path)?,
             results: HashMap::new(),
@@ -65,7 +65,7 @@ impl<'a> XmlReport<'a> {
 
     fn add(
         &mut self,
-        test_instance: runnable::TestInstance<'a>,
+        test_instance: runnable::TestInstance,
         test_result: &scheduler::TestCommandResult,
     ) {
         match self.results.entry(test_instance.app_name.to_string()) {
@@ -110,7 +110,7 @@ impl<'a> XmlReport<'a> {
     fn write_testcase(
         &self,
         out: &mut BufWriter<&File>,
-        test_instance: &runnable::TestInstance<'a>,
+        test_instance: &runnable::TestInstance,
         command_result: &scheduler::TestCommandResult,
     ) -> std::io::Result<()> {
         out.write_all(
@@ -201,7 +201,7 @@ impl<'a> XmlReport<'a> {
         Ok(())
     }
 }
-impl<'a> Drop for XmlReport<'a> {
+impl<'a> Drop for XmlReport {
     fn drop(&mut self) {
         self.write().expect("failed to write xml log!");
     }
@@ -258,20 +258,20 @@ impl Drop for CliLogger {
     }
 }
 
-struct FileLogger<'a> {
+struct FileLogger {
     log_dir: PathBuf,
-    files: HashMap<&'a str, File>,
+    files: HashMap<String, File>,
 }
-impl<'a> FileLogger<'a> {
-    fn new(log_dir: &Path) -> FileLogger<'_> {
+impl FileLogger {
+    fn new(log_dir: &Path) -> FileLogger {
         FileLogger {
             log_dir: log_dir.to_path_buf(),
             files: HashMap::new(),
         }
     }
-    fn add(&mut self, test_name: &'a str, output: &str) {
+    fn add(&mut self, test_name: &str, output: &str) {
         let log_dir = &self.log_dir;
-        let log_file = self.files.entry(test_name).or_insert_with(|| {
+        let log_file = self.files.entry(test_name.to_owned()).or_insert_with(|| {
             File::create(log_dir.join(PathBuf::from(test_name.to_owned() + ".txt")))
                 .expect("could not create log file!")
         });

@@ -1,5 +1,7 @@
 use serde_derive::{Deserialize, Serialize};
-use std::io::{BufRead, Write};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::prelude::*;
+use tokio_process::CommandExt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamRequest {
@@ -17,8 +19,12 @@ pub struct StreamResult {
     pub stdout: String,
 }
 
-pub fn xge() -> (XGEWriter, XGEReader) {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+pub fn xge() -> (
+    tokio_process::Child,
+    impl Future<Item = TcpStream, Error = std::io::Error>,
+) {
+    let listener =
+        TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
     let port = listener.local_addr().unwrap().port();
     let parent = std::env::current_exe().unwrap();
     let parent = parent.parent().unwrap();
@@ -30,54 +36,15 @@ pub fn xge() -> (XGEWriter, XGEReader) {
         .arg(format!("/profile={}", profile_xml))
         .arg("/openmonitor")
         .arg(format!("/command={} client 127.0.0.1:{}", xge_exe, port))
-        .spawn()
+        .spawn_async()
         .expect("could not spawn XGE client!");
-    let client_socket = listener.incoming().next().unwrap();
 
-    let writer = std::io::BufWriter::new(client_socket.unwrap());
-    (XGEWriter(writer), XGEReader::from(client_process))
-}
-
-pub struct XGEWriter(std::io::BufWriter<std::net::TcpStream>);
-impl XGEWriter {
-    pub fn run(&mut self, request: &StreamRequest) -> std::io::Result<()> {
-        self.0
-            .write_all(serde_json::to_string(&request)?.as_bytes())?;
-        self.0.write_all(b"\n")?;
-        self.0.flush()?;
-        Ok(())
-    }
-    pub fn done(&mut self) -> std::io::Result<()> {
-        self.0.get_ref().shutdown(std::net::Shutdown::Both)?;
-        Ok(())
-    }
-}
-
-pub struct XGEReader {
-    reader: std::io::BufReader<std::process::ChildStdout>,
-}
-impl XGEReader {
-    fn from(child: std::process::Child) -> XGEReader {
-        XGEReader {
-            reader: std::io::BufReader::new(child.stdout.unwrap()),
-        }
-    }
-}
-impl Iterator for XGEReader {
-    type Item = StreamResult;
-    fn next(&mut self) -> Option<StreamResult> {
-        loop {
-            let mut line = String::new();
-            match self.reader.read_line(&mut line) {
-                Ok(_num_bytes) => {
-                    if line.starts_with("mwt done") {
-                        return None;
-                    } else if line.starts_with("mwt ") {
-                        return Some(serde_json::from_str(&line[4..]).unwrap());
-                    }
-                }
-                Err(_) => return None,
-            }
-        }
-    }
+    (
+        client_process,
+        listener
+            .incoming()
+            .take(1)
+            .collect()
+            .map(|mut v| v.remove(0)),
+    )
 }

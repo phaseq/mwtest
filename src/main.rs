@@ -216,7 +216,7 @@ fn cmd_run(
         println!("WARNING: No tests were selected.");
         std::process::exit(0); // counts as success
     }
-    scheduler::run(&input_paths, &tests, &output_paths, &run_config)
+    scheduler::run(&input_paths, tests, &output_paths, &run_config)
 }
 
 #[derive(Debug)]
@@ -243,13 +243,11 @@ impl std::hash::Hash for TestId {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OutputPaths {
     out_dir: PathBuf,
     tmp_dir: PathBuf,
 }
-
-type TestUid<'a> = (&'a str, &'a str);
 
 fn test_apps_from_args(
     args: &clap::ArgMatches<'_>,
