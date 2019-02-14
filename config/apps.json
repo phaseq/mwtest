@@ -85,5 +85,28 @@
       "--output-dir",
       "{{tmp_path}}"
     ]
+  },
+  "cadcam": {
+    "command_template": [
+      "{{exe}}",
+      "--gtest_filter={{input}}"
+    ]
+  },
+  "cncsimUnit": {
+    "command_template": [
+      "{{exe}}",
+      "--gtest_filter={{input}}"
+    ]
+  },
+  "stockmanager": {
+    "command_template": [
+      "{{exe}}",
+      "--config",
+      "{{input}}",
+      "--verifier",
+      "{{dll}}",
+      "--out-dir",
+      "{{tmp_path}}"
+    ]
   }
 }
