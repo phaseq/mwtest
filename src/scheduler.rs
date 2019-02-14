@@ -52,18 +52,21 @@ fn run_async<'a>(
         1
     };
 
-    let local_test_stream = stream::iter_ok::<_, ()>(/*local_tests*/tests)
+    let local_test_stream = stream::iter_ok::<_, ()>(/*local_tests*/ tests)
         .map(move |test_generator| {
             let test_instance = test_generator.instantiate();
-            //tokio::runtime::current_thread::block_on_all(
+            let timeout = test_instance.timeout.unwrap_or((60 * 60 * 24) as f32); // TODO: how to deal with no timeout?
             test_instance
                 .run_async()
-                //.timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_millis((timeout * 1000f32) as u64))
+                .or_else(move |_| {
+                    future::ok(TestCommandResult {
+                        exit_code: 1,
+                        stdout: format!("(test was killed by {} second timeout)", timeout),
+                    })
+                })
                 .map(move |res| (test_instance, res))
-            //.timeout(std::time::Duration::from_secs(5)).map_err(|_|panic!("timeout"))
         })
-    .timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| panic!("timeout"))
         .buffer_unordered(n_workers);
 
     //let running_tests: Vec<_> = xge_tests.iter().map(|t| t.instantiate()).collect();
@@ -87,40 +90,38 @@ fn run_async<'a>(
     tokio::spawn(xge_request_future);*/
 
     /*let stream_results = tokio::io::lines(std::io::BufReader::new(xge_reader))
-        .filter_map(|line| {
-            if line.starts_with("mwt ") {
-                Some(serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap())
-            } else {
-                None
-            }
-        })
-        .map(|stream_result| {
-            let result = TestCommandResult {
-                exit_code: stream_result.exit_code,
-                stdout: stream_result.stdout,
-            };
-            let test_instance = running_tests[stream_result.id as usize].clone();
-            (test_instance, result)
-        })
-        .map_err(|_| ());*/
+    .filter_map(|line| {
+        if line.starts_with("mwt ") {
+            Some(serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap())
+        } else {
+            None
+        }
+    })
+    .map(|stream_result| {
+        let result = TestCommandResult {
+            exit_code: stream_result.exit_code,
+            stdout: stream_result.stdout,
+        };
+        let test_instance = running_tests[stream_result.id as usize].clone();
+        (test_instance, result)
+    })
+    .map_err(|_| ());*/
 
-    let mut report = report::Report::new(
+    let report = report::Report::new(
         &output_paths.out_dir,
         input_paths.testcases_root.to_str().unwrap(),
         run_config.verbose,
     );
-    let result_stream = local_test_stream/*.select(stream_results)*/
+    let result_stream = local_test_stream /*.select(stream_results)*/
         .fold(
-        (true, 0, n),
-        |(success, i, n), (test_instance, output)| {
-            report.add(i+1, n, test_instance, &output);
-            let new_success = success && output.exit_code == 0;
-            future::ok((new_success, i + 1, n))
-        },
-    );
-    let result = result_stream.map(|(success, _, _)| success).wait().unwrap();
-
-    future::ok(result)
+            (true, report, 0, n),
+            |(success, mut report, i, n), (test_instance, output)| {
+                report.add(i + 1, n, test_instance, &output);
+                let new_success = success && output.exit_code == 0;
+                future::ok((new_success, report, i + 1, n))
+            },
+        );
+    result_stream.map(|(success, _, _, _)| success)
 }
 
 impl TestInstance {
@@ -130,10 +131,7 @@ impl TestInstance {
             .current_dir(&self.command.cwd)
             .output_async();
         let tmp_path = self.command.tmp_path.clone();
-        //let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32); // TODO: how to deal with no timeout?
         output
-            //.timeout(std::time::Duration::from_millis((timeout * 1000f32) as u64))
-            //.timeout(std::time::Duration::from_secs(50000000))
             .map_err(|e| panic!("ERROR: failed to run test command: {}", e))
             .map(|output| {
                 let exit_code = output.status.code().unwrap_or(-7787);
