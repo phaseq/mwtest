@@ -210,19 +210,33 @@ impl<'a> Drop for XmlReport {
 struct CliLogger {
     verbose: bool,
     term_width: Option<usize>,
+    run_counts: HashMap<TestUid, RunCount>,
+}
+type TestUid = (String, String);
+struct RunCount {
+    n_runs: u32,
+    n_successes: u32,
 }
 impl CliLogger {
     fn create(verbose: bool) -> CliLogger {
         CliLogger {
             verbose,
             term_width: term_size::dimensions_stdout().map(|(w, _h)| w),
+            run_counts: HashMap::new(),
         }
     }
     fn init(&self) {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
-    fn add(&self, i: usize, n: usize, name: &str, id: &str, result: &scheduler::TestCommandResult) {
+    fn add(
+        &mut self,
+        i: usize,
+        n: usize,
+        name: &str,
+        id: &str,
+        result: &scheduler::TestCommandResult,
+    ) {
         // generate progress message
         let ok_or_failed = if result.exit_code == 0 {
             "Ok"
@@ -248,6 +262,70 @@ impl CliLogger {
         if self.term_width.is_some() {
             std::io::stdout().flush().unwrap();
         }
+
+        let entry = self
+            .run_counts
+            .entry((name.to_string(), id.to_string()))
+            .or_insert(RunCount {
+                n_runs: 0,
+                n_successes: 0,
+            });
+        entry.n_runs += 1;
+        if result.exit_code == 0 {
+            entry.n_successes += 1;
+        }
+    }
+
+    fn report_summary(&self) -> bool {
+        let test_formatter = |(id, run_counts): (&TestUid, &RunCount)| {
+            if run_counts.n_runs > 1 {
+                format!(
+                    "  {} --id {} (succeeded {} out of {} runs)",
+                    id.0, id.1, run_counts.n_successes, run_counts.n_runs
+                )
+            } else {
+                format!("  {} --id {}", id.0, id.1)
+            }
+        };
+        let mut failed: Vec<String> = self
+            .run_counts
+            .iter()
+            .filter(|(_id, run_counts)| run_counts.n_successes == 0)
+            .map(test_formatter)
+            .collect();
+        failed.sort_unstable();
+        let all_succeeded = failed.is_empty();
+
+        let mut instable: Vec<String> = self
+            .run_counts
+            .iter()
+            .filter(|(_id, run_counts)| {
+                run_counts.n_successes > 0 && run_counts.n_successes < run_counts.n_runs
+            })
+            .map(test_formatter)
+            .collect();
+        instable.sort_unstable();
+        let none_instable = instable.is_empty();
+
+        if !none_instable {
+            println!("Tests that are instable: ");
+            for t in instable {
+                println!("{}", t);
+            }
+        }
+
+        if !all_succeeded {
+            println!("Tests that failed: ");
+            for t in failed {
+                println!("{}", t);
+            }
+        }
+
+        if all_succeeded && none_instable {
+            println!("All tests succeeded!");
+        }
+
+        all_succeeded
     }
 }
 impl Drop for CliLogger {
@@ -255,6 +333,7 @@ impl Drop for CliLogger {
         if !self.verbose {
             println!();
         }
+        self.report_summary();
     }
 }
 

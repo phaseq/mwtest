@@ -16,7 +16,7 @@ pub struct RunConfig {
     pub rerun_if_failed: usize,
 }
 
-pub fn run<'a>(
+pub fn run(
     input_paths: &config::InputPaths,
     tests: Vec<TestInstanceCreator>,
     output_paths: &crate::OutputPaths,
@@ -34,11 +34,11 @@ pub struct TestCommandResult {
     pub stdout: String,
 }
 
-fn run_async<'a>(
+fn run_async(
     tests: Vec<TestInstanceCreator>,
-    input_paths: &'a config::InputPaths,
-    output_paths: &'a OutputPaths,
-    run_config: &'a RunConfig,
+    input_paths: &config::InputPaths,
+    output_paths: &OutputPaths,
+    run_config: &RunConfig,
 ) -> impl Future<Item = bool, Error = ()> {
     let n = tests.len() * run_config.repeat;
 
@@ -65,9 +65,9 @@ fn run_async<'a>(
         .map(|(success, _)| success)
 }
 
-fn run_local_async<'a>(
+fn run_local_async(
     tests: Vec<TestInstanceCreator>,
-    run_config: &'a RunConfig,
+    run_config: &RunConfig,
 ) -> impl Stream<Item = (TestInstance, TestCommandResult), Error = ()> {
     let n_workers = if run_config.parallel || run_config.xge {
         num_cpus::get()
@@ -93,7 +93,7 @@ fn run_local_async<'a>(
         .buffer_unordered(n_workers)
 }
 
-fn run_xge_async<'a>(
+fn run_xge_async(
     tests: Vec<TestInstanceCreator>,
     n_repeats: usize,
 ) -> (
