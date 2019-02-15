@@ -4,6 +4,7 @@ use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
 use futures::Future;
 use std::process::Command;
+use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::CommandExt;
 
@@ -41,18 +42,42 @@ fn run_async<'a>(
 ) -> impl Future<Item = bool, Error = ()> {
     let n = tests.len() * run_config.repeat;
 
-    //let (xge_client_process, xge_socket) = xge_lib::xge();
-    //let (xge_reader, mut xge_writer) = xge_socket.wait().unwrap().split();
+    let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
+    let local_result_stream = run_local_async(local_tests, &run_config);
+    let (xge_future, xge_result_stream) = run_xge_async(xge_tests);
 
-    //let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
+    let report = report::Report::new(
+        &output_paths.out_dir,
+        input_paths.testcases_root.to_str().unwrap(),
+        run_config.verbose,
+    );
+    let result_stream = local_result_stream.select(xge_result_stream).fold(
+        (true, report, 0, n),
+        |(success, mut report, i, n), (test_instance, output)| {
+            report.add(i + 1, n, test_instance, &output);
+            let new_success = success && output.exit_code == 0;
+            future::ok((new_success, report, i + 1, n))
+        },
+    );
+    result_stream
+        .map(|(success, _, _, _)| success)
+        .map_err(|_| panic!("failed parsing results!"))
+        .join(xge_future.map(|_| true))
+        .map(|(success, _)| success)
+        .map_err(|_| panic!("failed parsing results!"))
+}
 
+fn run_local_async<'a>(
+    tests: Vec<TestInstanceCreator>,
+    run_config: &'a RunConfig,
+) -> impl Stream<Item = (TestInstance, TestCommandResult), Error = ()> {
     let n_workers = if run_config.parallel || run_config.xge {
         num_cpus::get()
     } else {
         1
     };
 
-    let local_test_stream = stream::iter_ok::<_, ()>(/*local_tests*/ tests)
+    stream::iter_ok::<_, ()>(tests)
         .map(move |test_generator| {
             let test_instance = test_generator.instantiate();
             let timeout = test_instance.timeout.unwrap_or((60 * 60 * 24) as f32); // TODO: how to deal with no timeout?
@@ -67,12 +92,24 @@ fn run_async<'a>(
                 })
                 .map(move |res| (test_instance, res))
         })
-        .buffer_unordered(n_workers);
+        .buffer_unordered(n_workers)
+}
 
-    //let running_tests: Vec<_> = xge_tests.iter().map(|t| t.instantiate()).collect();
+fn run_xge_async<'a>(
+    tests: Vec<TestInstanceCreator>,
+) -> (
+    impl Future<Item = (), Error = ()>,
+    impl Stream<Item = (TestInstance, TestCommandResult), Error = ()>,
+) {
+    let (xge_client_process, xge_socket) = xge_lib::xge();
+    let xge_socket = LinesCodec::new().framed(xge_socket.wait().unwrap());
+    let (xge_writer, xge_reader) = xge_socket.split();
 
-    /*let xge_request_future = stream::iter_ok::<_, ()>(running_tests.clone())
-        .fold(0u64, move |id, test_instance| {
+    let running_tests: Vec<_> = tests.iter().map(|t| t.instantiate()).collect();
+
+    let xge_requests_future = stream::iter_ok::<_, ()>(running_tests.clone())
+        .zip(stream::iter_ok::<_, ()>(0..))
+        .map(|(test_instance, id)| {
             let request = xge_lib::StreamRequest {
                 id,
                 title: test_instance.test_id.id.clone(),
@@ -80,48 +117,38 @@ fn run_async<'a>(
                 command: test_instance.command.command.clone(),
                 local: false,
             };
-            xge_writer
-                .write((serde_json::to_string(&request).unwrap() + "\n").as_bytes())
-                .unwrap();
-            xge_writer.flush().unwrap();
-            future::ok(id + 1)
+            serde_json::to_string(&request).unwrap() + "\n"
         })
-        .map(|_| {});
-    tokio::spawn(xge_request_future);*/
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "oh no!"))
+        .forward(xge_writer)
+        .map(|_| ())
+        .map_err(|e| panic!("error while sending to XGE server: {}", e));
 
-    /*let stream_results = tokio::io::lines(std::io::BufReader::new(xge_reader))
-    .filter_map(|line| {
-        if line.starts_with("mwt ") {
-            Some(serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap())
-        } else {
-            None
-        }
-    })
-    .map(|stream_result| {
-        let result = TestCommandResult {
-            exit_code: stream_result.exit_code,
-            stdout: stream_result.stdout,
-        };
-        let test_instance = running_tests[stream_result.id as usize].clone();
-        (test_instance, result)
-    })
-    .map_err(|_| ());*/
+    let xge_future = xge_requests_future
+        .join(xge_client_process.map_err(|e| panic!("failed to run XGE server: {}", e)))
+        .map(|(_, _)| ());
 
-    let report = report::Report::new(
-        &output_paths.out_dir,
-        input_paths.testcases_root.to_str().unwrap(),
-        run_config.verbose,
-    );
-    let result_stream = local_test_stream /*.select(stream_results)*/
-        .fold(
-            (true, report, 0, n),
-            |(success, mut report, i, n), (test_instance, output)| {
-                report.add(i + 1, n, test_instance, &output);
-                let new_success = success && output.exit_code == 0;
-                future::ok((new_success, report, i + 1, n))
-            },
-        );
-    result_stream.map(|(success, _, _, _)| success)
+    let xge_result_stream = xge_reader
+        .filter_map(|line| {
+            if line == "mwt done" {
+                None
+            } else if line.starts_with("mwt ") {
+                Some(serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap())
+            } else {
+                None
+            }
+        })
+        .map(move |stream_result| {
+            let result = TestCommandResult {
+                exit_code: stream_result.exit_code,
+                stdout: stream_result.stdout,
+            };
+            let test_instance = running_tests[stream_result.id as usize].clone();
+            (test_instance, result)
+        })
+        .map_err(|_| ());
+
+    (xge_future, xge_result_stream)
 }
 
 impl TestInstance {
