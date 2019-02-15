@@ -44,7 +44,7 @@ fn run_async<'a>(
 
     let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
     let local_result_stream = run_local_async(local_tests, &run_config);
-    let (xge_future, xge_result_stream) = run_xge_async(xge_tests);
+    let (xge_future, xge_result_stream) = run_xge_async(xge_tests, run_config.repeat);
 
     let report = report::Report::new(
         &output_paths.out_dir,
@@ -61,10 +61,8 @@ fn run_async<'a>(
     );
     result_stream
         .map(|(success, _, _, _)| success)
-        .map_err(|_| panic!("failed parsing results!"))
         .join(xge_future.map(|_| true))
         .map(|(success, _)| success)
-        .map_err(|_| panic!("failed parsing results!"))
 }
 
 fn run_local_async<'a>(
@@ -77,9 +75,9 @@ fn run_local_async<'a>(
         1
     };
 
-    stream::iter_ok::<_, ()>(tests)
-        .map(move |test_generator| {
-            let test_instance = test_generator.instantiate();
+    //stream::iter_ok::<_, ()>(tests)
+    TestIter::new(tests, run_config.repeat)
+        .map(move |test_instance| {
             let timeout = test_instance.timeout.unwrap_or((60 * 60 * 24) as f32); // TODO: how to deal with no timeout?
             test_instance
                 .run_async()
@@ -97,6 +95,7 @@ fn run_local_async<'a>(
 
 fn run_xge_async<'a>(
     tests: Vec<TestInstanceCreator>,
+    n_repeats: usize,
 ) -> (
     impl Future<Item = (), Error = ()>,
     impl Stream<Item = (TestInstance, TestCommandResult), Error = ()>,
@@ -105,7 +104,7 @@ fn run_xge_async<'a>(
     let xge_socket = LinesCodec::new().framed(xge_socket.wait().unwrap());
     let (xge_writer, xge_reader) = xge_socket.split();
 
-    let running_tests: Vec<_> = tests.iter().map(|t| t.instantiate()).collect();
+    let running_tests = TestIter::new(tests, n_repeats).collect().wait().unwrap();
 
     let xge_requests_future = stream::iter_ok::<_, ()>(running_tests.clone())
         .zip(stream::iter_ok::<_, ()>(0..))
@@ -180,5 +179,40 @@ impl TestInstance {
                     stdout: output_str,
                 }
             })
+    }
+}
+
+struct TestIter {
+    tests: Vec<TestInstanceCreator>,
+    test_idx: usize,
+    i: usize,
+    n_repeats: usize,
+}
+impl TestIter {
+    fn new(tests: Vec<TestInstanceCreator>, n_repeats: usize) -> TestIter {
+        TestIter {
+            tests,
+            test_idx: 0,
+            i: 0,
+            n_repeats,
+        }
+    }
+}
+impl tokio::prelude::Stream for TestIter {
+    type Item = TestInstance;
+    type Error = ();
+
+    fn poll(&mut self) -> Result<Async<Option<TestInstance>>, ()> {
+        if self.test_idx >= self.tests.len() {
+            Ok(Async::Ready(None))
+        } else if self.i < self.n_repeats {
+            let instance = self.tests[self.test_idx].instantiate();
+            self.i += 1;
+            Ok(Async::Ready(Some(instance)))
+        } else {
+            self.test_idx += 1;
+            self.i = 0;
+            self.poll()
+        }
     }
 }
