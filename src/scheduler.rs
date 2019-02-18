@@ -23,9 +23,25 @@ pub fn run(
     run_config: &RunConfig,
 ) -> bool {
     let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-    runtime
-        .block_on(run_async(tests, &input_paths, &output_paths, &run_config))
-        .unwrap()
+    if run_config.xge {
+        runtime
+            .block_on(run_report_xge(
+                tests,
+                &input_paths,
+                &output_paths,
+                &run_config,
+            ))
+            .unwrap()
+    } else {
+        runtime
+            .block_on(run_report_local(
+                tests,
+                &input_paths,
+                &output_paths,
+                &run_config,
+            ))
+            .unwrap()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +50,26 @@ pub struct TestCommandResult {
     pub stdout: String,
 }
 
-fn run_async(
+fn run_report_local(
+    tests: Vec<TestInstanceCreator>,
+    input_paths: &config::InputPaths,
+    output_paths: &OutputPaths,
+    run_config: &RunConfig,
+) -> impl Future<Item = bool, Error = ()> {
+    let n = tests.len() * run_config.repeat;
+
+    let result_stream = to_local_stream(tests, &run_config);
+    report_async(
+        &input_paths,
+        &output_paths,
+        &run_config,
+        future::ok(()),
+        result_stream,
+        n,
+    )
+}
+
+fn run_report_xge(
     tests: Vec<TestInstanceCreator>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
@@ -43,31 +78,52 @@ fn run_async(
     let n = tests.len() * run_config.repeat;
 
     let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
-    let local_result_stream = run_local_async(local_tests, &run_config);
-    let (xge_future, xge_result_stream) = run_xge_async(xge_tests, run_config.repeat);
+    let local_result_stream = to_local_stream(local_tests, &run_config);
+    let (xge_future, xge_result_stream) = to_xge_stream(xge_tests, run_config.repeat);
 
+    let result_stream = local_result_stream.select(xge_result_stream);
+    report_async(
+        &input_paths,
+        &output_paths,
+        &run_config,
+        xge_future,
+        result_stream,
+        n,
+    )
+}
+
+fn report_async<F, S>(
+    input_paths: &config::InputPaths,
+    output_paths: &OutputPaths,
+    run_config: &RunConfig,
+    future: F,
+    stream: S,
+    n: usize,
+) -> impl Future<Item = bool, Error = ()>
+where
+    F: Future<Item = (), Error = ()>,
+    S: Stream<Item = (TestInstance, TestCommandResult), Error = ()>,
+{
     let report = report::Report::new(
         &output_paths.out_dir,
         input_paths.testcases_root.to_str().unwrap(),
         run_config.verbose,
     );
-    let result_stream = local_result_stream
-        .select(xge_result_stream.take(n as u64))
-        .fold(
-            (true, report, 0, n),
-            |(success, mut report, i, n), (test_instance, output)| {
-                report.add(i + 1, n, test_instance, &output);
-                let new_success = success && output.exit_code == 0;
-                future::ok((new_success, report, i + 1, n))
-            },
-        );
+    let result_stream = stream.fold(
+        (true, report, 0, n),
+        |(success, mut report, i, n), (test_instance, output)| {
+            report.add(i + 1, n, test_instance, &output);
+            let new_success = success && output.exit_code == 0;
+            future::ok((new_success, report, i + 1, n))
+        },
+    );
     result_stream
         .map(|(success, _, _, _)| success)
-        .join(xge_future.map(|_| true))
+        .join(future.map(|_| true))
         .map(|(success, _)| success)
 }
 
-fn run_local_async(
+fn to_local_stream(
     tests: Vec<TestInstanceCreator>,
     run_config: &RunConfig,
 ) -> impl Stream<Item = (TestInstance, TestCommandResult), Error = ()> {
@@ -95,7 +151,7 @@ fn run_local_async(
         .buffer_unordered(n_workers)
 }
 
-fn run_xge_async(
+fn to_xge_stream(
     tests: Vec<TestInstanceCreator>,
     n_repeats: usize,
 ) -> (
