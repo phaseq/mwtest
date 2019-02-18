@@ -8,6 +8,7 @@ use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::CommandExt;
 
+#[derive(Debug, Clone)]
 pub struct RunConfig {
     pub verbose: bool,
     pub parallel: bool,
@@ -79,7 +80,7 @@ fn run_report_xge(
 
     let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
     let local_result_stream = to_local_stream(local_tests, &run_config);
-    let (xge_future, xge_result_stream) = to_xge_stream(xge_tests, run_config.repeat);
+    let (xge_future, xge_result_stream) = to_xge_stream(xge_tests, run_config);
 
     let result_stream = local_result_stream.select(xge_result_stream);
     report_async(
@@ -133,8 +134,7 @@ fn to_local_stream(
         1
     };
 
-    //stream::iter_ok::<_, ()>(tests)
-    TestIter::new(tests, run_config.repeat)
+    RepeatedTestStream::new(tests, run_config)
         .map(move |test_instance| {
             let timeout = test_instance.timeout.unwrap_or((60 * 60 * 24) as f32); // TODO: how to deal with no timeout?
             test_instance
@@ -153,7 +153,7 @@ fn to_local_stream(
 
 fn to_xge_stream(
     tests: Vec<TestInstanceCreator>,
-    n_repeats: usize,
+    run_config: &RunConfig,
 ) -> (
     impl Future<Item = (), Error = ()>,
     impl Stream<Item = (TestInstance, TestCommandResult), Error = ()>,
@@ -162,7 +162,10 @@ fn to_xge_stream(
     let xge_socket = LinesCodec::new().framed(xge_socket.wait().unwrap());
     let (xge_writer, _xge_reader) = xge_socket.split();
 
-    let running_tests = TestIter::new(tests, n_repeats).collect().wait().unwrap();
+    let running_tests = RepeatedTestStream::new(tests, run_config)
+        .collect()
+        .wait()
+        .unwrap();
 
     let xge_requests_future = stream::iter_ok::<_, ()>(running_tests.clone())
         .zip(stream::iter_ok::<_, ()>(0..))
@@ -241,32 +244,30 @@ impl TestInstance {
     }
 }
 
-struct TestIter {
+struct RepeatedTestStream {
     tests: Vec<TestInstanceCreator>,
     test_idx: usize,
     i: usize,
-    n_repeats: usize,
+    run_config: RunConfig,
 }
-
-impl TestIter {
-    fn new(tests: Vec<TestInstanceCreator>, n_repeats: usize) -> TestIter {
-        TestIter {
+impl RepeatedTestStream {
+    fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> RepeatedTestStream {
+        RepeatedTestStream {
             tests,
             test_idx: 0,
             i: 0,
-            n_repeats,
+            run_config: run_config.clone(),
         }
     }
 }
-
-impl tokio::prelude::Stream for TestIter {
+impl Stream for RepeatedTestStream {
     type Item = TestInstance;
     type Error = ();
 
     fn poll(&mut self) -> Result<Async<Option<TestInstance>>, ()> {
         if self.test_idx >= self.tests.len() {
             Ok(Async::Ready(None))
-        } else if self.i < self.n_repeats {
+        } else if self.i < self.run_config.repeat {
             let instance = self.tests[self.test_idx].instantiate();
             self.i += 1;
             Ok(Async::Ready(Some(instance)))
@@ -275,5 +276,113 @@ impl tokio::prelude::Stream for TestIter {
             self.i = 0;
             self.poll()
         }
+    }
+}
+
+enum XGEStreamState {
+    WaitingForChild,
+    WaitingForReader,
+    WaitingForWriter,
+    SendingCommands,
+}
+
+struct XGEStream {
+    tests: Vec<TestInstance>,
+    child: tokio_process::Child,
+    writer: futures::sink::Send<
+        futures::stream::SplitSink<
+            tokio::codec::Framed<tokio::net::TcpStream, tokio::codec::LinesCodec>,
+        >,
+    >,
+    reader: tokio::io::Lines<std::io::BufReader<tokio_process::ChildStdout>>,
+    state: XGEStreamState,
+    test_idx: usize,
+}
+impl XGEStream {
+    fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> XGEStream {
+        let (mut child, xge_socket) = xge_lib::xge();
+        let xge_socket = LinesCodec::new().framed(xge_socket.wait().unwrap());
+        let (writer, _) = xge_socket.split();
+
+        let running_tests = RepeatedTestStream::new(tests, run_config)
+            .collect()
+            .wait()
+            .unwrap();
+
+        let test_strings: Vec<String> = running_tests
+            .iter()
+            .zip(0..)
+            .map(|(test_instance, id)| {
+                let request = xge_lib::StreamRequest {
+                    id,
+                    title: test_instance.test_id.id.clone(),
+                    cwd: test_instance.command.cwd.clone(),
+                    command: test_instance.command.command.clone(),
+                    local: false,
+                };
+                serde_json::to_string(&request).unwrap()
+            })
+            .collect();
+
+        let writer = writer.send(test_strings[0].clone());
+
+        let stdout = child.stdout().take().unwrap();
+        let reader = tokio::io::lines(std::io::BufReader::new(stdout));
+
+        XGEStream {
+            tests: running_tests,
+            test_idx: 0,
+            child,
+            writer,
+            reader,
+            state: XGEStreamState::WaitingForChild,
+        }
+    }
+}
+impl Stream for XGEStream {
+    type Item = (TestInstance, TestCommandResult);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
+        match self.writer.poll() {
+            Ok(Async::Ready(sink)) => {
+                self.test_idx += 1;
+                if self.test_idx < self.tests.len() {
+                    let test_instance = &self.tests[self.test_idx];
+                    let request = xge_lib::StreamRequest {
+                        id: self.test_idx as u64,
+                        title: test_instance.test_id.id.clone(),
+                        cwd: test_instance.command.cwd.clone(),
+                        command: test_instance.command.command.clone(),
+                        local: false,
+                    };
+                    let message = serde_json::to_string(&request).unwrap();
+                    self.writer = sink.send(message);
+                }
+            }
+            Ok(Async::NotReady) => {}
+            Err(e) => panic!("XGE write error: {}", e),
+        }
+        match self.reader.poll() {
+            Ok(Async::Ready(line)) => {
+                if let Some(line) = line {
+                    if line != "mwt done" && line.starts_with("mwt ") {
+                        let stream_result =
+                            serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+                        let result = TestCommandResult {
+                            exit_code: stream_result.exit_code,
+                            stdout: stream_result.stdout,
+                        };
+                        let test_instance = self.tests[stream_result.id as usize].clone();
+                        return Ok(Async::Ready(Some((test_instance, result))));
+                    }
+                } else {
+                    return Ok(Async::Ready(None));
+                }
+            }
+            Ok(Async::NotReady) => {}
+            Err(e) => panic!("XGE read error: {}", e),
+        }
+        Ok(Async::NotReady)
     }
 }
