@@ -14,22 +14,25 @@ static GLOBAL: System = System;
 fn accept_commands(stream: TcpStream) {
     let reader = io::BufReader::new(stream);
     for cmd_str in reader.lines() {
-        let request: xge_lib::StreamRequest = serde_json::from_str(&cmd_str.unwrap()).unwrap();
-        let this_exe = env::current_exe().unwrap();
+        let cmd_str = cmd_str.unwrap();
+        let request: serde_json::Result<xge_lib::StreamRequest> = serde_json::from_str(&cmd_str);
+        if let Ok(request) = request {
+            let this_exe = env::current_exe().unwrap();
 
-        let mut cmd = Command::new("xgSubmit");
-        cmd.current_dir(request.cwd)
-            .arg(format!("/caption={}", request.title.replace(' ', "_")));
-        if request.local {
-            cmd.arg("/allowremote=off");
+            let mut cmd = Command::new("xgSubmit");
+            cmd.current_dir(request.cwd)
+                .arg(format!("/caption={}", request.title.replace(' ', "_")));
+            if request.local {
+                cmd.arg("/allowremote=off");
+            }
+            cmd.arg("/command")
+                .arg(this_exe)
+                .arg("w")
+                .arg(request.id.to_string())
+                .args(request.command)
+                .spawn()
+                .expect("XGE-Launcher: failed to launch process!");
         }
-        cmd.arg("/command")
-            .arg(this_exe)
-            .arg("w")
-            .arg(request.id.to_string())
-            .args(request.command)
-            .spawn()
-            .expect("XGE-Launcher: failed to launch process!");
     }
     println!("mwt done");
 }
