@@ -283,7 +283,8 @@ impl Stream for RepeatedTestStream {
 }
 
 struct XGEStream {
-    tests: Vec<TestInstance>,
+    test_creators: Vec<(TestInstanceCreator, u64)>,
+    test_queue: Vec<(TestInstance, usize)>,
     child: tokio_process::Child,
     writer: Option<
         futures::sink::Send<
@@ -299,6 +300,7 @@ struct XGEStream {
     >,
     reader: tokio::io::Lines<std::io::BufReader<tokio_process::ChildStdout>>,
     test_idx: usize,
+    n_retries: u64,
 }
 impl XGEStream {
     fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> XGEStream {
@@ -306,36 +308,49 @@ impl XGEStream {
         let xge_socket = LinesCodec::new().framed(xge_socket.wait().unwrap());
         let (writer, _) = xge_socket.split();
 
-        let running_tests = RepeatedTestStream::new(tests, run_config)
-            .collect()
-            .wait()
-            .unwrap();
+        let mut test_queue = vec![];
+        let mut i = 0;
+        for test_creator in &tests {
+            for _ in 0..run_config.repeat {
+                test_queue.push((test_creator.instantiate(), i));
+            }
+            i += 1;
+        }
+
+        let test_creators: Vec<(TestInstanceCreator, u64)> =
+            tests.into_iter().map(move |t| (t, 0)).collect();
 
         let stdout = child.stdout().take().unwrap();
         let reader = tokio::io::lines(std::io::BufReader::new(stdout));
 
         XGEStream {
-            tests: running_tests,
+            test_creators,
+            test_queue,
             test_idx: 0,
             child,
             writer: None,
             sink: Some(writer),
             reader,
+            n_retries: run_config.rerun_if_failed as u64,
         }
     }
 
-    fn next_message(&mut self) -> String {
-        let test_instance = &self.tests[self.test_idx];
-        let request = xge_lib::StreamRequest {
-            id: self.test_idx as u64,
-            title: test_instance.test_id.id.clone(),
-            cwd: test_instance.command.cwd.clone(),
-            command: test_instance.command.command.clone(),
-            local: false,
-        };
-        let message = serde_json::to_string(&request).unwrap();
-        self.test_idx += 1;
-        message
+    fn next_message(&mut self) -> Option<String> {
+        if self.test_idx < self.test_queue.len() {
+            let test_instance = &self.test_queue[self.test_idx].0;
+            let request = xge_lib::StreamRequest {
+                id: self.test_idx as u64,
+                title: test_instance.test_id.id.clone(),
+                cwd: test_instance.command.cwd.clone(),
+                command: test_instance.command.command.clone(),
+                local: false,
+            };
+            let message = serde_json::to_string(&request).unwrap();
+            self.test_idx += 1;
+            Some(message)
+        } else {
+            None
+        }
     }
 }
 impl Stream for XGEStream {
@@ -347,9 +362,9 @@ impl Stream for XGEStream {
         if let Some(ref mut writer) = self.writer {
             match writer.poll() {
                 Ok(Async::Ready(sink)) => {
-                    if self.test_idx < self.tests.len() {
+                    if let Some(message) = self.next_message() {
                         // use sink to send next message
-                        self.writer = Some(sink.send(self.next_message()));
+                        self.writer = Some(sink.send(message));
                     } else {
                         // no more messages to send: move sink to storage
                         self.writer = None;
@@ -359,9 +374,9 @@ impl Stream for XGEStream {
                 Ok(Async::NotReady) => {}
                 Err(e) => panic!("XGE write error: {}", e),
             }
-        } else if self.test_idx < self.tests.len() {
+        } else if let Some(message) = self.next_message() {
             // consume sink to send new message
-            self.writer = Some(self.sink.take().unwrap().send(self.next_message()));
+            self.writer = Some(self.sink.take().unwrap().send(message));
         }
 
         // try to get new response
@@ -371,12 +386,23 @@ impl Stream for XGEStream {
                     if line != "mwt done" && line.starts_with("mwt ") {
                         let stream_result =
                             serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+
+                        // increase the test's run counter
+                        let test_instance = self.test_queue[stream_result.id as usize].clone();
+                        let mut test_creator = &mut self.test_creators[test_instance.1];
+                        test_creator.1 += 1;
+
+                        // retry up to n_retries times
+                        if stream_result.exit_code != 0 && test_creator.1 < self.n_retries {
+                            self.test_queue
+                                .push((test_creator.0.instantiate(), test_instance.1));
+                        }
+
                         let result = TestCommandResult {
                             exit_code: stream_result.exit_code,
                             stdout: stream_result.stdout,
                         };
-                        let test_instance = self.tests[stream_result.id as usize].clone();
-                        return Ok(Async::Ready(Some((test_instance, result))));
+                        return Ok(Async::Ready(Some((test_instance.0, result))));
                     }
                 } else {
                     // no more lines available (pipe has been closed)
