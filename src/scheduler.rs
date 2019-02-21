@@ -285,7 +285,8 @@ impl Stream for RepeatedTestStream {
 struct XGEStream {
     test_creators: Vec<(TestInstanceCreator, u64)>,
     test_queue: Vec<(TestInstance, usize)>,
-    child: tokio_process::Child,
+    #[allow(dead_code)]
+    child: tokio_process::Child, // stored here to keep reader alive
     writer: Option<
         futures::sink::Send<
             futures::stream::SplitSink<
@@ -301,6 +302,7 @@ struct XGEStream {
     reader: tokio::io::Lines<std::io::BufReader<tokio_process::ChildStdout>>,
     test_idx: usize,
     n_retries: u64,
+    n_queued: u64,
 }
 impl XGEStream {
     fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> XGEStream {
@@ -332,6 +334,7 @@ impl XGEStream {
             sink: Some(writer),
             reader,
             n_retries: run_config.rerun_if_failed as u64,
+            n_queued: 0,
         }
     }
 
@@ -359,66 +362,77 @@ impl Stream for XGEStream {
 
     fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
         // try to send next message
-        if let Some(ref mut writer) = self.writer {
-            match writer.poll() {
-                Ok(Async::Ready(sink)) => {
-                    if let Some(message) = self.next_message() {
-                        // use sink to send next message
-                        self.writer = Some(sink.send(message));
-                    } else {
-                        // no more messages to send: move sink to storage
-                        self.writer = None;
-                        self.sink = Some(sink);
+        loop {
+            if let Some(ref mut writer) = self.writer {
+                match writer.poll() {
+                    Ok(Async::Ready(sink)) => {
+                        if let Some(message) = self.next_message() {
+                            // use sink to send next message
+                            self.writer = Some(sink.send(message));
+                            self.n_queued += 1;
+                        } else {
+                            // no more messages to send: move sink to storage
+                            self.writer = None;
+                            self.sink = Some(sink);
+                            break;
+                        }
                     }
+                    Ok(Async::NotReady) => {
+                        break;
+                    }
+                    Err(e) => panic!("XGE write error: {}", e),
                 }
-                Ok(Async::NotReady) => {}
-                Err(e) => panic!("XGE write error: {}", e),
+            } else if let Some(message) = self.next_message() {
+                // consume sink to send new message
+                self.writer = Some(self.sink.take().unwrap().send(message));
+                self.n_queued += 1;
+            } else {
+                break;
             }
-        } else if let Some(message) = self.next_message() {
-            // consume sink to send new message
-            self.writer = Some(self.sink.take().unwrap().send(message));
         }
 
         // try to get new response
-        match self.reader.poll() {
-            Ok(Async::Ready(line)) => {
-                if let Some(line) = line {
-                    if line != "mwt done" && line.starts_with("mwt ") {
-                        let stream_result =
-                            serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+        loop {
+            match self.reader.poll() {
+                Ok(Async::Ready(line)) => {
+                    if let Some(line) = line {
+                        if line != "mwt done" && line.starts_with("mwt ") {
+                            self.n_queued -= 1;
+                            let stream_result =
+                                serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
 
-                        // increase the test's run counter
-                        let test_instance = self.test_queue[stream_result.id as usize].clone();
-                        let mut test_creator = &mut self.test_creators[test_instance.1];
-                        test_creator.1 += 1;
+                            // increase the test's run counter
+                            let test_instance = self.test_queue[stream_result.id as usize].clone();
+                            let mut test_creator = &mut self.test_creators[test_instance.1];
+                            test_creator.1 += 1;
 
-                        // retry up to n_retries times
-                        if stream_result.exit_code != 0 && test_creator.1 < self.n_retries {
-                            self.test_queue
-                                .push((test_creator.0.instantiate(), test_instance.1));
+                            // retry up to n_retries times
+                            if stream_result.exit_code != 0 && test_creator.1 < self.n_retries {
+                                self.test_queue
+                                    .push((test_creator.0.instantiate(), test_instance.1));
+                            }
+
+                            let result = TestCommandResult {
+                                exit_code: stream_result.exit_code,
+                                stdout: stream_result.stdout,
+                            };
+                            return Ok(Async::Ready(Some((test_instance.0, result))));
                         }
-
-                        let result = TestCommandResult {
-                            exit_code: stream_result.exit_code,
-                            stdout: stream_result.stdout,
-                        };
-                        return Ok(Async::Ready(Some((test_instance.0, result))));
+                        continue;
+                    } else {
+                        // no more lines available (pipe has been closed)
+                        return Ok(Async::Ready(None));
                     }
-                } else {
-                    // no more lines available (pipe has been closed)
-                    return Ok(Async::Ready(None));
                 }
+                Ok(Async::NotReady) => {
+                    if self.n_queued == 0 {
+                        return Ok(Async::Ready(None));
+                    } else {
+                        return Ok(Async::NotReady);
+                    }
+                }
+                Err(e) => panic!("XGE read error: {}", e),
             }
-            Ok(Async::NotReady) => {}
-            Err(e) => panic!("XGE read error: {}", e),
         }
-
-        // poll client process
-        match self.child.poll() {
-            Ok(Async::Ready(_exit_status)) => return Ok(Async::Ready(None)),
-            Ok(Async::NotReady) => {}
-            Err(e) => panic!("XGE client error: {}", e),
-        }
-        Ok(Async::NotReady)
     }
 }
