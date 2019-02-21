@@ -311,12 +311,10 @@ impl XGEStream {
         let (writer, _) = xge_socket.split();
 
         let mut test_queue = vec![];
-        let mut i = 0;
-        for test_creator in &tests {
+        for (i, test_creator) in tests.iter().enumerate() {
             for _ in 0..run_config.repeat {
                 test_queue.push((test_creator.instantiate(), i));
             }
-            i += 1;
         }
 
         let test_creators: Vec<(TestInstanceCreator, u64)> =
@@ -338,6 +336,35 @@ impl XGEStream {
         }
     }
 
+    fn poll_send(&mut self) -> Poll<Option<()>, ()> {
+        loop {
+            if let Some(ref mut writer) = self.writer {
+                match writer.poll() {
+                    Ok(Async::Ready(sink)) => {
+                        if let Some(message) = self.next_message() {
+                            // use sink to send next message
+                            self.writer = Some(sink.send(message));
+                            self.n_queued += 1;
+                        } else {
+                            // no more messages to send: move sink to storage
+                            self.writer = None;
+                            self.sink = Some(sink);
+                            return Ok(Async::Ready(None));
+                        }
+                    }
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                    Err(e) => panic!("XGE write error: {}", e),
+                }
+            } else if let Some(message) = self.next_message() {
+                // consume sink to send new message
+                self.writer = Some(self.sink.take().unwrap().send(message));
+                self.n_queued += 1;
+            } else {
+                return Ok(Async::Ready(None));
+            }
+        }
+    }
+
     fn next_message(&mut self) -> Option<String> {
         if self.test_idx < self.test_queue.len() {
             let test_instance = &self.test_queue[self.test_idx].0;
@@ -355,68 +382,15 @@ impl XGEStream {
             None
         }
     }
-}
-impl Stream for XGEStream {
-    type Item = (TestInstance, TestCommandResult);
-    type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
-        // try to send next message
-        loop {
-            if let Some(ref mut writer) = self.writer {
-                match writer.poll() {
-                    Ok(Async::Ready(sink)) => {
-                        if let Some(message) = self.next_message() {
-                            // use sink to send next message
-                            self.writer = Some(sink.send(message));
-                            self.n_queued += 1;
-                        } else {
-                            // no more messages to send: move sink to storage
-                            self.writer = None;
-                            self.sink = Some(sink);
-                            break;
-                        }
-                    }
-                    Ok(Async::NotReady) => {
-                        break;
-                    }
-                    Err(e) => panic!("XGE write error: {}", e),
-                }
-            } else if let Some(message) = self.next_message() {
-                // consume sink to send new message
-                self.writer = Some(self.sink.take().unwrap().send(message));
-                self.n_queued += 1;
-            } else {
-                break;
-            }
-        }
-
-        // try to get new response
+    fn poll_receive(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
         loop {
             match self.reader.poll() {
                 Ok(Async::Ready(line)) => {
                     if let Some(line) = line {
                         if line != "mwt done" && line.starts_with("mwt ") {
-                            self.n_queued -= 1;
-                            let stream_result =
-                                serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
-
-                            // increase the test's run counter
-                            let test_instance = self.test_queue[stream_result.id as usize].clone();
-                            let mut test_creator = &mut self.test_creators[test_instance.1];
-                            test_creator.1 += 1;
-
-                            // retry up to n_retries times
-                            if stream_result.exit_code != 0 && test_creator.1 < self.n_retries {
-                                self.test_queue
-                                    .push((test_creator.0.instantiate(), test_instance.1));
-                            }
-
-                            let result = TestCommandResult {
-                                exit_code: stream_result.exit_code,
-                                stdout: stream_result.stdout,
-                            };
-                            return Ok(Async::Ready(Some((test_instance.0, result))));
+                            let result = self.handle_received_message(line);
+                            return Ok(Async::Ready(Some(result)));
                         }
                         continue;
                     } else {
@@ -434,5 +408,36 @@ impl Stream for XGEStream {
                 Err(e) => panic!("XGE read error: {}", e),
             }
         }
+    }
+
+    fn handle_received_message(&mut self, line: String) -> (TestInstance, TestCommandResult) {
+        self.n_queued -= 1;
+        let stream_result = serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+
+        // increase the test's run counter
+        let test_instance = self.test_queue[stream_result.id as usize].clone();
+        let mut test_creator = &mut self.test_creators[test_instance.1];
+        test_creator.1 += 1;
+
+        // retry up to n_retries times
+        if stream_result.exit_code != 0 && test_creator.1 < self.n_retries {
+            self.test_queue
+                .push((test_creator.0.instantiate(), test_instance.1));
+        }
+
+        let result = TestCommandResult {
+            exit_code: stream_result.exit_code,
+            stdout: stream_result.stdout,
+        };
+        (test_instance.0, result)
+    }
+}
+impl Stream for XGEStream {
+    type Item = (TestInstance, TestCommandResult);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
+        self.poll_send().expect("XGE send failed");
+        self.poll_receive()
     }
 }
