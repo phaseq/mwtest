@@ -280,11 +280,11 @@ impl CliLogger {
         let test_formatter = |(id, run_counts): (&TestUid, &RunCount)| {
             if run_counts.n_runs > 1 {
                 format!(
-                    "  {} --id {} (succeeded {} out of {} runs)",
+                    "  {} --id \"{}\" (succeeded {} out of {} runs)",
                     id.0, id.1, run_counts.n_successes, run_counts.n_runs
                 )
             } else {
-                format!("  {} --id {}", id.0, id.1)
+                format!("  {} --id \"{}\"", id.0, id.1)
             }
         };
         let mut failed: Vec<String> = self

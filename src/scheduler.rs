@@ -119,14 +119,17 @@ fn to_local_stream(
 
     RepeatedTestStream::new(tests, run_config)
         .map(move |test_instance| {
-            let timeout = test_instance.timeout.unwrap_or((60 * 60 * 24) as f32); // TODO: how to deal with no timeout?
+            let timeout = test_instance.get_timeout_duration();
             test_instance
                 .run_async()
-                .timeout(std::time::Duration::from_millis((timeout * 1000f32) as u64))
+                .timeout(timeout)
                 .or_else(move |_| {
                     future::ok(TestCommandResult {
                         exit_code: 1,
-                        stdout: format!("(test was killed by {} second timeout)", timeout),
+                        stdout: format!(
+                            "(test was killed by {} second timeout)",
+                            timeout.as_secs()
+                        ),
                     })
                 })
                 .map(move |res| (test_instance, res))
@@ -163,6 +166,12 @@ impl TestInstance {
                     stdout: output_str,
                 }
             })
+    }
+
+    fn get_timeout_duration(&self) -> std::time::Duration {
+        // TODO: is there a more elegant way to handle this?
+        let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
+        std::time::Duration::from_millis((timeout * 1000f32) as u64)
     }
 }
 
