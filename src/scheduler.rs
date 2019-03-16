@@ -4,6 +4,8 @@ use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
 use futures::Future;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::CommandExt;
@@ -74,7 +76,7 @@ fn run_report_xge(
     let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
 
     let local_result_stream = to_local_stream(local_tests, &run_config);
-    let xge_result_stream = XGEStream::new(xge_tests, run_config);
+    let xge_result_stream = TestStream::new(XGEStream::new(), xge_tests, run_config);
 
     let result_stream = local_result_stream.select(xge_result_stream);
 
@@ -181,6 +183,7 @@ struct RepeatedTestStream {
     i: usize,
     run_config: RunConfig,
 }
+
 impl RepeatedTestStream {
     fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> RepeatedTestStream {
         RepeatedTestStream {
@@ -191,6 +194,7 @@ impl RepeatedTestStream {
         }
     }
 }
+
 impl Stream for RepeatedTestStream {
     type Item = TestInstance;
     type Error = ();
@@ -210,9 +214,109 @@ impl Stream for RepeatedTestStream {
     }
 }
 
+struct RepeatableTest {
+    creator: TestInstanceCreator,
+    n_runs: AtomicUsize,
+}
+
+impl RepeatableTest {
+    fn new(creator: TestInstanceCreator) -> RepeatableTest {
+        RepeatableTest {
+            creator,
+            n_runs: AtomicUsize::new(0),
+        }
+    }
+
+    fn increase_run_count(&self) {
+        self.n_runs.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn count_runs(&self) -> usize {
+        self.n_runs.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Clone)]
+struct RepeatableTestInstance {
+    creator: Arc<RepeatableTest>,
+    instance: TestInstance,
+}
+
+impl RepeatableTestInstance {
+    fn new(test: Arc<RepeatableTest>) -> RepeatableTestInstance {
+        let instance = test.creator.instantiate();
+        RepeatableTestInstance {
+            creator: test,
+            instance: instance,
+        }
+    }
+}
+
+trait RepeatableTestStream:
+    Stream<Item = (RepeatableTestInstance, TestCommandResult), Error = ()>
+{
+    fn enqueue(&mut self, instance: RepeatableTestInstance);
+}
+
+struct TestStream<S>
+where
+    S: RepeatableTestStream,
+{
+    stream: S,
+    n_retries: u64,
+}
+
+impl<S> TestStream<S>
+where
+    S: RepeatableTestStream,
+{
+    fn new(mut s: S, tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> TestStream<S> {
+        tests.into_iter().for_each(|t| {
+            s.enqueue(RepeatableTestInstance::new(Arc::new(RepeatableTest::new(
+                t,
+            ))))
+        });
+
+        TestStream {
+            stream: s,
+            n_retries: run_config.rerun_if_failed as u64,
+        }
+    }
+}
+
+impl<S> Stream for TestStream<S>
+where
+    S: RepeatableTestStream,
+{
+    type Item = (TestInstance, TestCommandResult);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
+        match self.stream.poll() {
+            Ok(Async::Ready(result)) => {
+                if let Some((instance, result)) = result {
+                    instance.creator.increase_run_count();
+
+                    // retry up to n_retries times
+                    if result.exit_code != 0
+                        && instance.creator.count_runs() < self.n_retries as usize
+                    {
+                        self.stream
+                            .enqueue(RepeatableTestInstance::new(instance.creator.clone()));
+                    }
+                    Ok(Async::Ready(Some((instance.instance, result))))
+                } else {
+                    Ok(Async::Ready(None))
+                }
+            }
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(_) => panic!("stream error"),
+        }
+    }
+}
+
 struct XGEStream {
-    test_creators: Vec<(TestInstanceCreator, u64)>,
-    test_queue: Vec<(TestInstance, usize)>,
+    test_queue: Vec<RepeatableTestInstance>,
     #[allow(dead_code)]
     child: tokio_process::Child, // stored here to keep reader alive
     writer: Option<
@@ -229,37 +333,25 @@ struct XGEStream {
     >,
     reader: tokio::io::Lines<std::io::BufReader<tokio_process::ChildStdout>>,
     test_idx: usize,
-    n_retries: u64,
     n_queued: u64,
 }
+
 impl XGEStream {
-    fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> XGEStream {
+    fn new() -> XGEStream {
         let (mut child, xge_socket) = xge_lib::xge();
         let xge_socket = LinesCodec::new().framed(xge_socket.wait().unwrap());
         let (writer, _) = xge_socket.split();
-
-        let mut test_queue = vec![];
-        for (i, test_creator) in tests.iter().enumerate() {
-            for _ in 0..run_config.repeat {
-                test_queue.push((test_creator.instantiate(), i));
-            }
-        }
-
-        let test_creators: Vec<(TestInstanceCreator, u64)> =
-            tests.into_iter().map(move |t| (t, 0)).collect();
 
         let stdout = child.stdout().take().unwrap();
         let reader = tokio::io::lines(std::io::BufReader::new(stdout));
 
         XGEStream {
-            test_creators,
-            test_queue,
+            test_queue: vec![],
             test_idx: 0,
             child,
             writer: None,
             sink: Some(writer),
             reader,
-            n_retries: run_config.rerun_if_failed as u64,
             n_queued: 0,
         }
     }
@@ -295,7 +387,7 @@ impl XGEStream {
 
     fn next_message(&mut self) -> Option<String> {
         if self.test_idx < self.test_queue.len() {
-            let test_instance = &self.test_queue[self.test_idx].0;
+            let test_instance = &self.test_queue[self.test_idx].instance;
             let request = xge_lib::StreamRequest {
                 id: self.test_idx as u64,
                 title: test_instance.test_id.id.clone(),
@@ -311,7 +403,7 @@ impl XGEStream {
         }
     }
 
-    fn poll_receive(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
+    fn poll_receive(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>, ()> {
         loop {
             match self.reader.poll() {
                 Ok(Async::Ready(line)) => {
@@ -338,34 +430,35 @@ impl XGEStream {
         }
     }
 
-    fn handle_received_message(&mut self, line: String) -> (TestInstance, TestCommandResult) {
+    fn handle_received_message(
+        &mut self,
+        line: String,
+    ) -> (RepeatableTestInstance, TestCommandResult) {
         self.n_queued -= 1;
         let stream_result = serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
 
-        // increase the test's run counter
-        let test_instance = self.test_queue[stream_result.id as usize].clone();
-        let mut test_creator = &mut self.test_creators[test_instance.1];
-        test_creator.1 += 1;
-
-        // retry up to n_retries times
-        if stream_result.exit_code != 0 && test_creator.1 < self.n_retries {
-            self.test_queue
-                .push((test_creator.0.instantiate(), test_instance.1));
-        }
+        let test = self.test_queue[stream_result.id as usize].clone();
 
         let result = TestCommandResult {
             exit_code: stream_result.exit_code,
             stdout: stream_result.stdout,
         };
-        (test_instance.0, result)
+        (test, result)
     }
 }
+
 impl Stream for XGEStream {
-    type Item = (TestInstance, TestCommandResult);
+    type Item = (RepeatableTestInstance, TestCommandResult);
     type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
+    fn poll(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>, ()> {
         self.poll_send().expect("XGE send failed");
         self.poll_receive()
+    }
+}
+
+impl RepeatableTestStream for XGEStream {
+    fn enqueue(&mut self, instance: RepeatableTestInstance) {
+        self.test_queue.push(instance);
     }
 }
