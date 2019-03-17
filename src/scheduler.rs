@@ -2,7 +2,8 @@ use crate::config;
 use crate::report;
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
-use futures::Future;
+use futures::{try_ready, Future};
+use std::boxed::Box;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -61,7 +62,13 @@ fn run_report_local(
 ) -> impl Future<Item = bool, Error = ()> {
     let n = tests.len() * run_config.repeat;
 
-    let result_stream = to_local_stream(tests, &run_config);
+    let n_workers = if run_config.parallel || run_config.xge {
+        num_cpus::get()
+    } else {
+        1
+    };
+
+    let result_stream = TestStream::new(LocalStream::new(n_workers), tests, &run_config);
     report_async(&input_paths, &output_paths, &run_config, result_stream, n)
 }
 
@@ -75,7 +82,14 @@ fn run_report_xge(
 
     let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
 
-    let local_result_stream = to_local_stream(local_tests, &run_config);
+    let n_workers = if run_config.parallel || run_config.xge {
+        num_cpus::get()
+    } else {
+        1
+    };
+
+    let local_result_stream =
+        TestStream::new(LocalStream::new(n_workers), local_tests, &run_config);
     let xge_result_stream = TestStream::new(XGEStream::new(), xge_tests, run_config);
 
     let result_stream = local_result_stream.select(xge_result_stream);
@@ -107,36 +121,6 @@ where
         },
     );
     result_stream.map(|(success, _, _, _)| success)
-}
-
-fn to_local_stream(
-    tests: Vec<TestInstanceCreator>,
-    run_config: &RunConfig,
-) -> impl Stream<Item = (TestInstance, TestCommandResult), Error = ()> {
-    let n_workers = if run_config.parallel || run_config.xge {
-        num_cpus::get()
-    } else {
-        1
-    };
-
-    RepeatedTestStream::new(tests, run_config)
-        .map(move |test_instance| {
-            let timeout = test_instance.get_timeout_duration();
-            test_instance
-                .run_async()
-                .timeout(timeout)
-                .or_else(move |_| {
-                    future::ok(TestCommandResult {
-                        exit_code: 1,
-                        stdout: format!(
-                            "(test was killed by {} second timeout)",
-                            timeout.as_secs()
-                        ),
-                    })
-                })
-                .map(move |res| (test_instance, res))
-        })
-        .buffer_unordered(n_workers)
 }
 
 impl TestInstance {
@@ -174,43 +158,6 @@ impl TestInstance {
         // TODO: is there a more elegant way to handle this?
         let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
         std::time::Duration::from_millis((timeout * 1000f32) as u64)
-    }
-}
-
-struct RepeatedTestStream {
-    tests: Vec<TestInstanceCreator>,
-    test_idx: usize,
-    i: usize,
-    run_config: RunConfig,
-}
-
-impl RepeatedTestStream {
-    fn new(tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> RepeatedTestStream {
-        RepeatedTestStream {
-            tests,
-            test_idx: 0,
-            i: 0,
-            run_config: run_config.clone(),
-        }
-    }
-}
-
-impl Stream for RepeatedTestStream {
-    type Item = TestInstance;
-    type Error = ();
-
-    fn poll(&mut self) -> Result<Async<Option<TestInstance>>, ()> {
-        if self.test_idx >= self.tests.len() {
-            Ok(Async::Ready(None))
-        } else if self.i < self.run_config.repeat {
-            let instance = self.tests[self.test_idx].instantiate();
-            self.i += 1;
-            Ok(Async::Ready(Some(instance)))
-        } else {
-            self.test_idx += 1;
-            self.i = 0;
-            self.poll()
-        }
     }
 }
 
@@ -312,6 +259,84 @@ where
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(_) => panic!("stream error"),
         }
+    }
+}
+
+struct LocalStream {
+    test_queue: std::collections::VecDeque<RepeatableTestInstance>,
+    queue: stream::FuturesUnordered<AsyncTestInstance>,
+    max: usize,
+}
+
+impl LocalStream {
+    fn new(max_processes: usize) -> LocalStream {
+        LocalStream {
+            test_queue: std::collections::VecDeque::new(),
+            queue: stream::FuturesUnordered::new(),
+            max: max_processes,
+        }
+    }
+}
+
+impl Stream for LocalStream {
+    type Item = (RepeatableTestInstance, TestCommandResult);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>, ()> {
+        while self.queue.len() < self.max {
+            if let Some(test) = self.test_queue.pop_front() {
+                let timeout = test.instance.get_timeout_duration();
+                let future = Box::new(test.instance.run_async().timeout(timeout).or_else(
+                    move |_| {
+                        future::ok(TestCommandResult {
+                            exit_code: 1,
+                            stdout: format!(
+                                "(test was killed by {} second timeout)",
+                                timeout.as_secs()
+                            ),
+                        })
+                    },
+                ));
+                self.queue.push(AsyncTestInstance { test, future });
+            } else {
+                break;
+            }
+        }
+
+        // Try polling a new future
+        if let Some(val) = try_ready!(self.queue.poll()) {
+            return Ok(Async::Ready(Some(val)));
+        }
+
+        // We're done
+        Ok(Async::Ready(None))
+    }
+}
+
+struct AsyncTestInstance {
+    test: RepeatableTestInstance,
+    future: Box<Future<Item = TestCommandResult, Error = ()> + Send>,
+}
+
+impl Future for AsyncTestInstance {
+    type Item = (RepeatableTestInstance, TestCommandResult);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<(RepeatableTestInstance, TestCommandResult), ()> {
+        match self.future.poll() {
+            Ok(Async::Ready(r)) => {
+                let res = (self.test.clone(), r);
+                Ok(Async::Ready(res))
+            }
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl RepeatableTestStream for LocalStream {
+    fn enqueue(&mut self, instance: RepeatableTestInstance) {
+        self.test_queue.push_back(instance);
     }
 }
 
