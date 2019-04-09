@@ -194,7 +194,7 @@ impl RepeatableTestInstance {
         let instance = test.creator.instantiate();
         RepeatableTestInstance {
             creator: test,
-            instance: instance,
+            instance,
         }
     }
 }
@@ -257,7 +257,7 @@ where
                 }
             }
             Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(_) => panic!("stream error"),
+            Err(()) => panic!("stream error"),
         }
     }
 }
@@ -329,7 +329,7 @@ impl Future for AsyncTestInstance {
                 Ok(Async::Ready(res))
             }
             Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(e) => Err(e),
+            Err(()) => Err(()),
         }
     }
 }
