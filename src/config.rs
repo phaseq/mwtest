@@ -174,7 +174,7 @@ impl TestGroup {
             .to_string();
         glob::glob(&abs_path)
             .expect("failed to read glob pattern!")
-            .map(|p| p.unwrap())
+            .map(Result::unwrap)
             .map(|p| {
                 if test_config.input_is_dir {
                     PathBuf::from(p.parent().unwrap())

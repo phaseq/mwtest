@@ -12,7 +12,7 @@ static GLOBAL: std::alloc::System = std::alloc::System;
 
 fn main() {
     let registered_tests = config::InputPaths::get_registered_tests();
-    let registered_tests_str: Vec<&str> = registered_tests.iter().map(|s| s.as_str()).collect();
+    let registered_tests_str: Vec<&str> = registered_tests.iter().map(String::as_str).collect();
     let test_app_arg = Arg::with_name("test_app")
         .required(true)
         .multiple(true)
