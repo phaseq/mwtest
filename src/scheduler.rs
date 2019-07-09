@@ -219,9 +219,10 @@ where
 {
     fn new(mut s: S, tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> TestStream<S> {
         tests.into_iter().for_each(|t| {
-            s.enqueue(RepeatableTestInstance::new(Arc::new(RepeatableTest::new(
-                t,
-            ))))
+            let test = Arc::new(RepeatableTest::new(t));
+            for _ in 0..run_config.repeat {
+                s.enqueue(RepeatableTestInstance::new(test.clone()));
+            }
         });
 
         TestStream {

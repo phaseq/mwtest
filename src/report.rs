@@ -225,10 +225,12 @@ impl CliLogger {
             run_counts: HashMap::new(),
         }
     }
+
     fn init(&self) {
         print!("waiting for results...");
         std::io::stdout().flush().unwrap();
     }
+
     fn add(
         &mut self,
         i: usize,
