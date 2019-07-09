@@ -68,7 +68,7 @@ fn run_report_local(
         1
     };
 
-    let result_stream = TestStream::new(LocalStream::new(n_workers), tests, &run_config);
+    let result_stream = RepeatingTestStream::new(LocalStream::new(n_workers), tests, &run_config);
     report_async(&input_paths, &output_paths, &run_config, result_stream, n)
 }
 
@@ -89,8 +89,8 @@ fn run_report_xge(
     };
 
     let local_result_stream =
-        TestStream::new(LocalStream::new(n_workers), local_tests, &run_config);
-    let xge_result_stream = TestStream::new(XGEStream::new(), xge_tests, run_config);
+        RepeatingTestStream::new(LocalStream::new(n_workers), local_tests, &run_config);
+    let xge_result_stream = RepeatingTestStream::new(XGEStream::new(), xge_tests, run_config);
 
     let result_stream = local_result_stream.select(xge_result_stream);
 
@@ -199,25 +199,25 @@ impl RepeatableTestInstance {
     }
 }
 
-trait RepeatableTestStream:
+trait TestStream:
     Stream<Item = (RepeatableTestInstance, TestCommandResult), Error = ()>
 {
     fn enqueue(&mut self, instance: RepeatableTestInstance);
 }
 
-struct TestStream<S>
+struct RepeatingTestStream<S>
 where
-    S: RepeatableTestStream,
+    S: TestStream,
 {
     stream: S,
     n_retries: u64,
 }
 
-impl<S> TestStream<S>
+impl<S> RepeatingTestStream<S>
 where
-    S: RepeatableTestStream,
+    S: TestStream,
 {
-    fn new(mut s: S, tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> TestStream<S> {
+    fn new(mut s: S, tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> RepeatingTestStream<S> {
         tests.into_iter().for_each(|t| {
             let test = Arc::new(RepeatableTest::new(t));
             for _ in 0..run_config.repeat {
@@ -225,16 +225,16 @@ where
             }
         });
 
-        TestStream {
+        RepeatingTestStream {
             stream: s,
             n_retries: run_config.rerun_if_failed as u64,
         }
     }
 }
 
-impl<S> Stream for TestStream<S>
+impl<S> Stream for RepeatingTestStream<S>
 where
-    S: RepeatableTestStream,
+    S: TestStream,
 {
     type Item = (TestInstance, TestCommandResult);
     type Error = ();
@@ -335,7 +335,7 @@ impl Future for AsyncTestInstance {
     }
 }
 
-impl RepeatableTestStream for LocalStream {
+impl TestStream for LocalStream {
     fn enqueue(&mut self, instance: RepeatableTestInstance) {
         self.test_queue.push_back(instance);
     }
@@ -483,7 +483,7 @@ impl Stream for XGEStream {
     }
 }
 
-impl RepeatableTestStream for XGEStream {
+impl TestStream for XGEStream {
     fn enqueue(&mut self, instance: RepeatableTestInstance) {
         self.test_queue.push(instance);
     }
