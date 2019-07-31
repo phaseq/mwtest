@@ -1,15 +1,11 @@
 use serde_json;
 use xge_lib;
 
-use std::alloc::System;
 use std::env;
 use std::io::{self, BufRead};
 use std::net::TcpStream;
 use std::process::Command;
 use std::str;
-
-#[global_allocator]
-static GLOBAL: System = System;
 
 fn accept_commands(stream: TcpStream) {
     let reader = io::BufReader::new(stream);
