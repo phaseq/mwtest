@@ -217,6 +217,7 @@ impl TestGroup {
             std::process::exit(-1);
         }
         let output = std::process::Command::new(&app.layout.exe)
+            .arg("--gtest_list_tests")
             .arg(format!("--gtest_filter={}", filter))
             .output()
             .expect("failed to gather tests!");
