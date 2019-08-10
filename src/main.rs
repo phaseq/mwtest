@@ -294,7 +294,7 @@ fn test_apps_from_args(
     apps
 }
 
-fn id_filter_from_args(args: &clap::ArgMatches<'_>) -> Box<Fn(&str) -> bool> {
+fn id_filter_from_args(args: &clap::ArgMatches<'_>) -> Box<dyn Fn(&str) -> bool> {
     let filter_tokens: Option<Vec<String>> = args
         .values_of("filter")
         .map(|v| v.map(String::from).collect());

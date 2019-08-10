@@ -2,14 +2,8 @@ use crate::config;
 use crate::report;
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
-use pin_project::unsafe_project;
-use std::boxed::Box;
-use std::pin::Pin;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::codec::{Decoder, LinesCodec};
+//use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::CommandExt;
 
@@ -28,7 +22,7 @@ pub fn run(
     output_paths: &crate::OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
-    let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+    let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
     /*if run_config.xge {
         runtime.block_on(async {
             run_report_xge(tests, &input_paths, &output_paths, &run_config).await
@@ -61,9 +55,40 @@ async fn run_report_local(
         1
     };
 
-    //let result_stream = RepeatingTestStream::new(LocalStream::new(n_workers), tests, &run_config);
-    //report_async(&input_paths, &output_paths, &run_config, result_stream, n).await
-    true
+    let report = report::Report::new(
+        &output_paths.out_dir,
+        input_paths.testcases_root.to_str().unwrap(),
+        run_config.verbose,
+    );
+    futures::stream::iter(tests)
+        .map(|tic| {
+            async {
+                let mut results = vec![];
+                for _ in 0..run_config.rerun_if_failed {
+                    let instance = tic.instantiate();
+                    let result = instance.run_async().await;
+                    let success = result.exit_code == 0;
+                    results.push((instance, result));
+                    if success {
+                        break;
+                    }
+                }
+                (tic, results)
+            }
+        })
+        .buffer_unordered(n_workers)
+        .fold(
+            (true, report, 0, n),
+            |(mut success, mut report, i, n), (_tic, results)| {
+                for (test_instance, result) in results {
+                    report.add(i + 1, n, test_instance, &result);
+                    success &= result.exit_code == 0;
+                }
+                futures::future::ready((success, report, i + 1, n))
+            },
+        )
+        .map(|(success, _, _, _)| success)
+        .await
 }
 
 /*async fn run_report_xge(
@@ -91,51 +116,38 @@ async fn run_report_local(
     report_async(&input_paths, &output_paths, &run_config, result_stream, n).await
 }*/
 
-async fn report_async<S>(
-    input_paths: &config::InputPaths,
-    output_paths: &OutputPaths,
-    run_config: &RunConfig,
-    stream: S,
-    n: usize,
-) -> bool
-where
-    S: Stream<Item = (TestInstance, TestCommandResult)>,
-{
-    let report = report::Report::new(
-        &output_paths.out_dir,
-        input_paths.testcases_root.to_str().unwrap(),
-        run_config.verbose,
-    );
-    /*let result_stream = stream.fold(
-        (true, report, 0, n),
-        |(success, mut report, i, n), (test_instance, output)| {
-            report.add(i + 1, n, test_instance, &output);
-            let new_success = success && output.exit_code == 0;
-            std::future::ok((new_success, report, i + 1, n))
-        },
-    );
-    result_stream.map(|(success, _, _, _)| success).await*/
-    true
-}
-
 impl TestInstance {
-    async fn run_async(&self) -> std::io::Result<TestCommandResult> {
+    async fn run_async(&self) -> TestCommandResult {
         let output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
             .output_async()
             .timeout(self.get_timeout_duration())
             .await;
-        if let Err(_) = output {
-            return Ok(TestCommandResult {
-                exit_code: 1,
-                stdout: format!(
-                    "[mwtest] terminated because {} second timeout was reached!",
-                    self.get_timeout_duration().as_secs()
-                ),
-            });
-        }
-        let output = output??;
+        let output = match output {
+            Ok(output) => output,
+            Err(_) => {
+                return TestCommandResult {
+                    exit_code: 1,
+                    stdout: format!(
+                        "[mwtest] terminated because {} second timeout was reached!",
+                        self.get_timeout_duration().as_secs()
+                    ),
+                };
+            }
+        };
+        let output = match output {
+            Ok(output) => output,
+            Err(e) => {
+                return TestCommandResult {
+                    exit_code: 1,
+                    stdout: format!(
+                        "[mwtest] error while trying to start test: {}",
+                        e.to_string()
+                    ),
+                };
+            }
+        };
         let tmp_path = self.command.tmp_path.clone();
         let exit_code = output.status.code().unwrap_or(-7787);
         let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
@@ -148,10 +160,10 @@ impl TestInstance {
                 std::fs::remove_dir(&tmp_path).expect("failed to clean up temporary directory!");
             }
         }
-        Ok(TestCommandResult {
+        TestCommandResult {
             exit_code,
             stdout: output_str,
-        })
+        }
     }
 
     fn get_timeout_duration(&self) -> std::time::Duration {
@@ -161,44 +173,45 @@ impl TestInstance {
     }
 }
 
-struct RepeatableTest {
-    creator: TestInstanceCreator,
-    n_runs: AtomicUsize,
+/*struct LocalStream {
+    test_queue: std::collections::VecDeque<RepeatableTestInstance>,
+    queue: stream::FuturesUnordered<Pin<Box<dyn Future<Output=(RepeatableTestInstance, TestInstance)>>>>,
+    max: usize,
 }
 
-impl RepeatableTest {
-    fn new(creator: TestInstanceCreator) -> RepeatableTest {
-        RepeatableTest {
-            creator,
-            n_runs: AtomicUsize::new(0),
-        }
-    }
-
-    fn increase_run_count(&self) {
-        self.n_runs.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn count_runs(&self) -> usize {
-        self.n_runs.load(Ordering::Relaxed)
-    }
-}
-
-#[derive(Clone)]
-struct RepeatableTestInstance {
-    creator: Arc<RepeatableTest>,
-    instance: TestInstance,
-}
-
-impl RepeatableTestInstance {
-    fn new(test: Arc<RepeatableTest>) -> RepeatableTestInstance {
-        let instance = test.creator.instantiate();
-        RepeatableTestInstance {
-            creator: test,
-            instance,
+impl LocalStream {
+    fn new(max_processes: usize) -> LocalStream {
+        LocalStream {
+            test_queue: std::collections::VecDeque::new(),
+            queue: stream::FuturesUnordered::new(),
+            max: max_processes,
         }
     }
 }
 
+impl Stream for LocalStream {
+    type Item = (RepeatableTestInstance, TestCommandResult);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        while self.queue.len() < self.max {
+            if let Some(test) = self.test_queue.pop_front() {
+                let future = Box::new(test.instance.run_async().map(move |f| (test, f)));
+                self.queue.push(future);
+            } else {
+                break;
+            }
+        }
+
+        // Try polling a new future
+        if let Poll::Ready(val) = self.queue.poll() {
+            return Poll::Ready(Some(val));
+        }
+
+        // We're done
+        Poll::Ready(None)
+    }
+}*/
+/*
 trait TestStream: Stream<Item = (RepeatableTestInstance, TestCommandResult)> {
     fn enqueue(&mut self, instance: RepeatableTestInstance);
 }
@@ -263,46 +276,6 @@ where
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
-    }
-}
-
-/*
-struct LocalStream {
-    test_queue: std::collections::VecDeque<RepeatableTestInstance>,
-    queue: stream::FuturesUnordered<AsyncTestInstance>,
-    max: usize,
-}
-
-impl LocalStream {
-    fn new(max_processes: usize) -> LocalStream {
-        LocalStream {
-            test_queue: std::collections::VecDeque::new(),
-            queue: stream::FuturesUnordered::new(),
-            max: max_processes,
-        }
-    }
-}
-
-impl Stream for LocalStream {
-    type Item = (RepeatableTestInstance, TestCommandResult);
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while self.queue.len() < self.max {
-            if let Some(test) = self.test_queue.pop_front() {
-                let future = Box::new(test.instance.run_async());
-                self.queue.push(AsyncTestInstance { test, future });
-            } else {
-                break;
-            }
-        }
-
-        // Try polling a new future
-        if let Poll::Ready(val) = self.queue.poll() {
-            return Poll::Ready(Some(val));
-        }
-
-        // We're done
-        Poll::Ready(None)
     }
 }
 */
