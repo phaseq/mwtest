@@ -1,3 +1,4 @@
+#![feature(async_await)]
 mod config;
 mod report;
 mod runnable;

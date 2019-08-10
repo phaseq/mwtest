@@ -19,9 +19,9 @@ pub struct StreamResult {
     pub stdout: String,
 }
 
-pub fn xge() -> (
-    tokio_process::Child,
-    impl Future<Item = TcpStream, Error = std::io::Error>,
+/*pub fn xge() -> (
+     tokio_process::Child,
+    impl Future<Output = std::io::Result<TcpStream>>,
 ) {
     let listener =
         TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
@@ -48,3 +48,4 @@ pub fn xge() -> (
             .map(|mut v| v.remove(0)),
     )
 }
+*/

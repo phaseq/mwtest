@@ -2,11 +2,13 @@ use crate::config;
 use crate::report;
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
-use futures::{try_ready, Future};
+use pin_project::unsafe_project;
 use std::boxed::Box;
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::CommandExt;
@@ -27,24 +29,15 @@ pub fn run(
     run_config: &RunConfig,
 ) -> bool {
     let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-    if run_config.xge {
-        runtime
-            .block_on(run_report_xge(
-                tests,
-                &input_paths,
-                &output_paths,
-                &run_config,
-            ))
-            .unwrap()
-    } else {
-        runtime
-            .block_on(run_report_local(
-                tests,
-                &input_paths,
-                &output_paths,
-                &run_config,
-            ))
-            .unwrap()
+    /*if run_config.xge {
+        runtime.block_on(async {
+            run_report_xge(tests, &input_paths, &output_paths, &run_config).await
+        })
+    } else*/
+    {
+        runtime.block_on(async {
+            run_report_local(tests, &input_paths, &output_paths, &run_config).await
+        })
     }
 }
 
@@ -54,12 +47,12 @@ pub struct TestCommandResult {
     pub stdout: String,
 }
 
-fn run_report_local(
+async fn run_report_local(
     tests: Vec<TestInstanceCreator>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
-) -> impl Future<Item = bool, Error = ()> {
+) -> bool {
     let n = tests.len() * run_config.repeat;
 
     let n_workers = if run_config.parallel || run_config.xge {
@@ -68,16 +61,17 @@ fn run_report_local(
         1
     };
 
-    let result_stream = RepeatingTestStream::new(LocalStream::new(n_workers), tests, &run_config);
-    report_async(&input_paths, &output_paths, &run_config, result_stream, n)
+    //let result_stream = RepeatingTestStream::new(LocalStream::new(n_workers), tests, &run_config);
+    //report_async(&input_paths, &output_paths, &run_config, result_stream, n).await
+    true
 }
 
-fn run_report_xge(
+/*async fn run_report_xge(
     tests: Vec<TestInstanceCreator>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
-) -> impl Future<Item = bool, Error = ()> {
+) -> bool {
     let n = tests.len() * run_config.repeat;
 
     let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
@@ -94,64 +88,70 @@ fn run_report_xge(
 
     let result_stream = local_result_stream.select(xge_result_stream);
 
-    report_async(&input_paths, &output_paths, &run_config, result_stream, n)
-}
+    report_async(&input_paths, &output_paths, &run_config, result_stream, n).await
+}*/
 
-fn report_async<S>(
+async fn report_async<S>(
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
     stream: S,
     n: usize,
-) -> impl Future<Item = bool, Error = ()>
+) -> bool
 where
-    S: Stream<Item = (TestInstance, TestCommandResult), Error = ()>,
+    S: Stream<Item = (TestInstance, TestCommandResult)>,
 {
     let report = report::Report::new(
         &output_paths.out_dir,
         input_paths.testcases_root.to_str().unwrap(),
         run_config.verbose,
     );
-    let result_stream = stream.fold(
+    /*let result_stream = stream.fold(
         (true, report, 0, n),
         |(success, mut report, i, n), (test_instance, output)| {
             report.add(i + 1, n, test_instance, &output);
             let new_success = success && output.exit_code == 0;
-            future::ok((new_success, report, i + 1, n))
+            std::future::ok((new_success, report, i + 1, n))
         },
     );
-    result_stream.map(|(success, _, _, _)| success)
+    result_stream.map(|(success, _, _, _)| success).await*/
+    true
 }
 
 impl TestInstance {
-    fn run_async(&self) -> impl Future<Item = TestCommandResult, Error = ()> {
+    async fn run_async(&self) -> std::io::Result<TestCommandResult> {
         let output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
-            .output_async();
+            .output_async()
+            .timeout(self.get_timeout_duration())
+            .await;
+        if let Err(_) = output {
+            return Ok(TestCommandResult {
+                exit_code: 1,
+                stdout: format!(
+                    "[mwtest] terminated because {} second timeout was reached!",
+                    self.get_timeout_duration().as_secs()
+                ),
+            });
+        }
+        let output = output??;
         let tmp_path = self.command.tmp_path.clone();
-        output
-            .map_err(|e| panic!("ERROR: failed to run test command: {}", e))
-            .map(|output| {
-                let exit_code = output.status.code().unwrap_or(-7787);
-                let stdout =
-                    std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
-                let stderr =
-                    std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
-                let output_str = stderr.to_owned() + stdout;
+        let exit_code = output.status.code().unwrap_or(-7787);
+        let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
+        let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
+        let output_str = stderr.to_owned() + stdout;
 
-                // cleanup
-                if let Some(tmp_path) = tmp_path {
-                    if tmp_path.is_dir() && std::fs::read_dir(&tmp_path).unwrap().next().is_none() {
-                        std::fs::remove_dir(&tmp_path)
-                            .expect("failed to clean up temporary directory!");
-                    }
-                }
-                TestCommandResult {
-                    exit_code,
-                    stdout: output_str,
-                }
-            })
+        // cleanup
+        if let Some(tmp_path) = tmp_path {
+            if tmp_path.is_dir() && std::fs::read_dir(&tmp_path).unwrap().next().is_none() {
+                std::fs::remove_dir(&tmp_path).expect("failed to clean up temporary directory!");
+            }
+        }
+        Ok(TestCommandResult {
+            exit_code,
+            stdout: output_str,
+        })
     }
 
     fn get_timeout_duration(&self) -> std::time::Duration {
@@ -199,16 +199,16 @@ impl RepeatableTestInstance {
     }
 }
 
-trait TestStream:
-    Stream<Item = (RepeatableTestInstance, TestCommandResult), Error = ()>
-{
+trait TestStream: Stream<Item = (RepeatableTestInstance, TestCommandResult)> {
     fn enqueue(&mut self, instance: RepeatableTestInstance);
 }
 
+#[unsafe_project(Unpin)]
 struct RepeatingTestStream<S>
 where
     S: TestStream,
 {
+    #[pin]
     stream: S,
     n_retries: u64,
 }
@@ -217,7 +217,11 @@ impl<S> RepeatingTestStream<S>
 where
     S: TestStream,
 {
-    fn new(mut s: S, tests: Vec<TestInstanceCreator>, run_config: &RunConfig) -> RepeatingTestStream<S> {
+    fn new(
+        mut s: S,
+        tests: Vec<TestInstanceCreator>,
+        run_config: &RunConfig,
+    ) -> RepeatingTestStream<S> {
         tests.into_iter().for_each(|t| {
             let test = Arc::new(RepeatableTest::new(t));
             for _ in 0..run_config.repeat {
@@ -230,6 +234,10 @@ where
             n_retries: run_config.rerun_if_failed as u64,
         }
     }
+
+    fn pin_get_stream(self: Pin<&mut Self>) -> Pin<&mut S> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
+    }
 }
 
 impl<S> Stream for RepeatingTestStream<S>
@@ -237,32 +245,28 @@ where
     S: TestStream,
 {
     type Item = (TestInstance, TestCommandResult);
-    type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<(TestInstance, TestCommandResult)>, ()> {
-        match self.stream.poll() {
-            Ok(Async::Ready(result)) => {
-                if let Some((instance, result)) = result {
-                    instance.creator.increase_run_count();
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        match this.stream.poll_next(cx) {
+            Poll::Ready(Some((instance, result))) => {
+                instance.creator.increase_run_count();
 
-                    // retry up to n_retries times
-                    if result.exit_code != 0
-                        && instance.creator.count_runs() < self.n_retries as usize
-                    {
-                        self.stream
-                            .enqueue(RepeatableTestInstance::new(instance.creator.clone()));
-                    }
-                    Ok(Async::Ready(Some((instance.instance, result))))
-                } else {
-                    Ok(Async::Ready(None))
+                // retry up to n_retries times
+                if result.exit_code != 0 && instance.creator.count_runs() < *this.n_retries as usize
+                {
+                    this.stream
+                        .enqueue(RepeatableTestInstance::new(instance.creator.clone()));
                 }
+                Poll::Ready(Some((instance.instance, result)))
             }
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(()) => panic!("stream error"),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
 
+/*
 struct LocalStream {
     test_queue: std::collections::VecDeque<RepeatableTestInstance>,
     queue: stream::FuturesUnordered<AsyncTestInstance>,
@@ -281,23 +285,11 @@ impl LocalStream {
 
 impl Stream for LocalStream {
     type Item = (RepeatableTestInstance, TestCommandResult);
-    type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>, ()> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         while self.queue.len() < self.max {
             if let Some(test) = self.test_queue.pop_front() {
-                let timeout = test.instance.get_timeout_duration();
-                let future = Box::new(test.instance.run_async().timeout(timeout).or_else(
-                    move |_| {
-                        future::ok(TestCommandResult {
-                            exit_code: 1,
-                            stdout: format!(
-                                "(test was killed by {} second timeout)",
-                                timeout.as_secs()
-                            ),
-                        })
-                    },
-                ));
+                let future = Box::new(test.instance.run_async());
                 self.queue.push(AsyncTestInstance { test, future });
             } else {
                 break;
@@ -305,32 +297,31 @@ impl Stream for LocalStream {
         }
 
         // Try polling a new future
-        if let Some(val) = try_ready!(self.queue.poll()) {
-            return Ok(Async::Ready(Some(val)));
+        if let Poll::Ready(val) = self.queue.poll() {
+            return Poll::Ready(Some(val));
         }
 
         // We're done
-        Ok(Async::Ready(None))
+        Poll::Ready(None)
     }
 }
-
+*/
+/*
 struct AsyncTestInstance {
     test: RepeatableTestInstance,
-    future: Box<Future<Item = TestCommandResult, Error = ()> + Send>,
+    future: Box<dyn Future<Output = std::io::Result<TestCommandResult>> + Send>,
 }
 
 impl Future for AsyncTestInstance {
-    type Item = (RepeatableTestInstance, TestCommandResult);
-    type Error = ();
+    type Output = (RepeatableTestInstance, TestCommandResult);
 
-    fn poll(&mut self) -> Poll<(RepeatableTestInstance, TestCommandResult), ()> {
-        match self.future.poll() {
-            Ok(Async::Ready(r)) => {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.future.poll(cx) {
+            Poll::Ready(r) => {
                 let res = (self.test.clone(), r);
-                Ok(Async::Ready(res))
+                Poll::Ready(res)
             }
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(()) => Err(()),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -339,8 +330,8 @@ impl TestStream for LocalStream {
     fn enqueue(&mut self, instance: RepeatableTestInstance) {
         self.test_queue.push_back(instance);
     }
-}
-
+}*/
+/*
 struct XGEStream {
     test_queue: Vec<RepeatableTestInstance>,
     #[allow(dead_code)]
@@ -429,7 +420,7 @@ impl XGEStream {
         }
     }
 
-    fn poll_receive(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>, ()> {
+    fn poll_receive(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>> {
         loop {
             match self.reader.poll() {
                 Ok(Async::Ready(line)) => {
@@ -475,9 +466,8 @@ impl XGEStream {
 
 impl Stream for XGEStream {
     type Item = (RepeatableTestInstance, TestCommandResult);
-    type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<(RepeatableTestInstance, TestCommandResult)>, ()> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.poll_send().expect("XGE send failed");
         self.poll_receive()
     }
@@ -488,3 +478,4 @@ impl TestStream for XGEStream {
         self.test_queue.push(instance);
     }
 }
+*/

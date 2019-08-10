@@ -15,9 +15,9 @@ serde = ">= 1.0.84"
 glob = ">= 0.2"
 num_cpus = ">= 1.9.0"
 htmlescape = ">= 0.3.1"
-tokio = ">= 0.1.15"
-futures = ">= 0.1.25"
-tokio-process = ">= 0.2.3"
+tokio = ">= 0.2.0-alpha.1"
+tokio-process = ">= 0.3.0-alpha.1"
+pin-project = "*"
 
 [lib]
 name = "xge_lib"
