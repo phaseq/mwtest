@@ -365,7 +365,7 @@ impl TestStream for XGEStream {
 mod tests {
     use super::*;
 
-    fn whoami_test() -> Vec<TestInstanceCreator> {
+    fn make_whoami_instance() -> Vec<TestInstanceCreator> {
         let command_generator = Box::new(move || TestCommand {
             command: vec!["whoami".to_owned()],
             cwd: ".".to_owned(),
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn test_run_local_once() {
         let (success, count) = count_results(
-            whoami_test(),
+            make_whoami_instance(),
             RunConfig {
                 verbose: false,
                 parallel: true,
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn test_run_local_repeat() {
         let (success, count) = count_results(
-            whoami_test(),
+            make_whoami_instance(),
             RunConfig {
                 verbose: false,
                 parallel: true,
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_run_local_out_of_order() {
-        let tests = [0.03f32, 0.01f32, 0.02f32]
+        let tests = [0.1f32, 0.001f32, 0.05f32]
             .into_iter()
             .map(|t| make_sleep_instance(Some(*t)))
             .collect();
@@ -495,6 +495,6 @@ mod tests {
             },
         );
         // tests should finish in the order of their expected duration
-        assert_eq!(ids, vec!["Some(0.01)", "Some(0.02)", "Some(0.03)"]);
+        assert_eq!(ids, vec!["Some(0.001)", "Some(0.05)", "Some(0.1)"]);
     }
 }
