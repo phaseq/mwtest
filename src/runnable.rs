@@ -33,11 +33,11 @@ pub fn create_run_commands<'a>(
 }
 
 pub struct TestInstanceCreator {
-    app_name: String,
-    test_id: TestId,
+    pub app_name: String,
+    pub test_id: TestId,
     pub allow_xge: bool,
-    timeout: Option<f32>,
-    command_generator: Box<CommandGenerator>,
+    pub timeout: Option<f32>,
+    pub command_generator: Box<CommandGenerator>,
 }
 unsafe impl Sync for TestInstanceCreator {}
 impl TestInstanceCreator {

@@ -1,5 +1,7 @@
 use crate::config;
 use crate::report;
+#[cfg(test)]
+use crate::runnable::TestCommand;
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
 use std::process::Command;
@@ -47,6 +49,22 @@ async fn run_report_local(
     output_paths: &OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
+    let mut report = report::Report::new(
+        &output_paths.out_dir,
+        input_paths.testcases_root.to_str().unwrap(),
+        run_config.verbose,
+    );
+    run_local(tests, run_config, |i, n, test_instance, result| {
+        report.add(i, n, test_instance, &result)
+    })
+    .await
+}
+
+async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
+    tests: Vec<TestInstanceCreator>,
+    run_config: &RunConfig,
+    callback: F,
+) -> bool {
     let n = tests.len() * run_config.repeat;
 
     let n_workers = if run_config.parallel || run_config.xge {
@@ -55,40 +73,61 @@ async fn run_report_local(
         1
     };
 
-    let report = report::Report::new(
-        &output_paths.out_dir,
-        input_paths.testcases_root.to_str().unwrap(),
-        run_config.verbose,
-    );
-    futures::stream::iter(tests)
-        .map(|tic| {
-            async {
-                let mut results = vec![];
-                for _ in 0..run_config.rerun_if_failed {
-                    let instance = tic.instantiate();
+    if run_config.rerun_if_failed == 0 {
+        // repeat each test exactly `repeat` times
+        let instances = tests
+            .into_iter()
+            .flat_map(|tic| (0..run_config.repeat).map(move |_| tic.instantiate()));
+        futures::stream::iter(instances)
+            .map(|instance| {
+                async {
                     let result = instance.run_async().await;
-                    let success = result.exit_code == 0;
-                    results.push((instance, result));
-                    if success {
-                        break;
-                    }
+                    (instance, result)
                 }
-                (tic, results)
-            }
-        })
-        .buffer_unordered(n_workers)
-        .fold(
-            (true, report, 0, n),
-            |(mut success, mut report, i, n), (_tic, results)| {
-                for (test_instance, result) in results {
-                    report.add(i + 1, n, test_instance, &result);
+            })
+            .buffer_unordered(n_workers)
+            .fold(
+                (true, callback, 0, n),
+                |(mut success, mut callback, i, n), (test_instance, result)| {
+                    callback(i + 1, n, test_instance, &result);
                     success &= result.exit_code == 0;
+                    futures::future::ready((success, callback, i + 1, n))
+                },
+            )
+            .map(|(success, _, _, _)| success)
+            .await
+    } else {
+        // repeat each test up to `rerun_if_failed` times (or less, if it succeeds earlier)
+        futures::stream::iter(tests)
+            .map(|tic| {
+                async {
+                    let mut results = vec![];
+                    for _ in 0..=run_config.rerun_if_failed {
+                        let instance = tic.instantiate();
+                        let result = instance.run_async().await;
+                        let success = result.exit_code == 0;
+                        results.push((instance, result));
+                        if success {
+                            break;
+                        }
+                    }
+                    (tic, results)
                 }
-                futures::future::ready((success, report, i + 1, n))
-            },
-        )
-        .map(|(success, _, _, _)| success)
-        .await
+            })
+            .buffer_unordered(n_workers)
+            .fold(
+                (true, callback, 0, n),
+                |(mut success, mut callback, i, n), (_tic, results)| {
+                    for (test_instance, result) in results {
+                        callback(i + 1, n, test_instance, &result);
+                        success &= result.exit_code == 0;
+                    }
+                    futures::future::ready((success, callback, i + 1, n))
+                },
+            )
+            .map(|(success, _, _, _)| success)
+            .await
+    }
 }
 
 /*async fn run_report_xge(
@@ -173,137 +212,6 @@ impl TestInstance {
     }
 }
 
-/*struct LocalStream {
-    test_queue: std::collections::VecDeque<RepeatableTestInstance>,
-    queue: stream::FuturesUnordered<Pin<Box<dyn Future<Output=(RepeatableTestInstance, TestInstance)>>>>,
-    max: usize,
-}
-
-impl LocalStream {
-    fn new(max_processes: usize) -> LocalStream {
-        LocalStream {
-            test_queue: std::collections::VecDeque::new(),
-            queue: stream::FuturesUnordered::new(),
-            max: max_processes,
-        }
-    }
-}
-
-impl Stream for LocalStream {
-    type Item = (RepeatableTestInstance, TestCommandResult);
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while self.queue.len() < self.max {
-            if let Some(test) = self.test_queue.pop_front() {
-                let future = Box::new(test.instance.run_async().map(move |f| (test, f)));
-                self.queue.push(future);
-            } else {
-                break;
-            }
-        }
-
-        // Try polling a new future
-        if let Poll::Ready(val) = self.queue.poll() {
-            return Poll::Ready(Some(val));
-        }
-
-        // We're done
-        Poll::Ready(None)
-    }
-}*/
-/*
-trait TestStream: Stream<Item = (RepeatableTestInstance, TestCommandResult)> {
-    fn enqueue(&mut self, instance: RepeatableTestInstance);
-}
-
-#[unsafe_project(Unpin)]
-struct RepeatingTestStream<S>
-where
-    S: TestStream,
-{
-    #[pin]
-    stream: S,
-    n_retries: u64,
-}
-
-impl<S> RepeatingTestStream<S>
-where
-    S: TestStream,
-{
-    fn new(
-        mut s: S,
-        tests: Vec<TestInstanceCreator>,
-        run_config: &RunConfig,
-    ) -> RepeatingTestStream<S> {
-        tests.into_iter().for_each(|t| {
-            let test = Arc::new(RepeatableTest::new(t));
-            for _ in 0..run_config.repeat {
-                s.enqueue(RepeatableTestInstance::new(test.clone()));
-            }
-        });
-
-        RepeatingTestStream {
-            stream: s,
-            n_retries: run_config.rerun_if_failed as u64,
-        }
-    }
-
-    fn pin_get_stream(self: Pin<&mut Self>) -> Pin<&mut S> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
-    }
-}
-
-impl<S> Stream for RepeatingTestStream<S>
-where
-    S: TestStream,
-{
-    type Item = (TestInstance, TestCommandResult);
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        match this.stream.poll_next(cx) {
-            Poll::Ready(Some((instance, result))) => {
-                instance.creator.increase_run_count();
-
-                // retry up to n_retries times
-                if result.exit_code != 0 && instance.creator.count_runs() < *this.n_retries as usize
-                {
-                    this.stream
-                        .enqueue(RepeatableTestInstance::new(instance.creator.clone()));
-                }
-                Poll::Ready(Some((instance.instance, result)))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-*/
-/*
-struct AsyncTestInstance {
-    test: RepeatableTestInstance,
-    future: Box<dyn Future<Output = std::io::Result<TestCommandResult>> + Send>,
-}
-
-impl Future for AsyncTestInstance {
-    type Output = (RepeatableTestInstance, TestCommandResult);
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.future.poll(cx) {
-            Poll::Ready(r) => {
-                let res = (self.test.clone(), r);
-                Poll::Ready(res)
-            }
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-impl TestStream for LocalStream {
-    fn enqueue(&mut self, instance: RepeatableTestInstance) {
-        self.test_queue.push_back(instance);
-    }
-}*/
 /*
 struct XGEStream {
     test_queue: Vec<RepeatableTestInstance>,
@@ -452,3 +360,141 @@ impl TestStream for XGEStream {
     }
 }
 */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn whoami_test() -> Vec<TestInstanceCreator> {
+        let command_generator = Box::new(move || TestCommand {
+            command: vec!["whoami".to_owned()],
+            cwd: ".".to_owned(),
+            tmp_path: None,
+        });
+        let test = TestInstanceCreator {
+            app_name: "test".to_owned(),
+            test_id: crate::TestId {
+                id: "test_id".to_owned(),
+                rel_path: None,
+            },
+            allow_xge: false,
+            timeout: None,
+            command_generator,
+        };
+        vec![test]
+    }
+
+    fn count_results(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
+        let mut count = 0;
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let success = runtime.block_on(async {
+            run_local(tests, &run_config, |_i, _n, _test_instance, _result| {
+                count += 1;
+            })
+            .await
+        });
+        (success, count)
+    }
+
+    fn collect_results(
+        tests: Vec<TestInstanceCreator>,
+        run_config: RunConfig,
+    ) -> (bool, Vec<String>) {
+        let mut ids = vec![];
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let success = runtime.block_on(async {
+            run_local(tests, &run_config, |_i, _n, test_instance, _result| {
+                ids.push(test_instance.test_id.id);
+            })
+            .await
+        });
+        (success, ids)
+    }
+
+    #[test]
+    fn test_run_local_once() {
+        let (success, count) = count_results(
+            whoami_test(),
+            RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: false,
+                repeat: 1,
+                rerun_if_failed: 0,
+            },
+        );
+        assert_eq!(success, true);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_run_local_repeat() {
+        let (success, count) = count_results(
+            whoami_test(),
+            RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: false,
+                repeat: 10,
+                rerun_if_failed: 0,
+            },
+        );
+        assert_eq!(success, true);
+        assert_eq!(count, 10);
+    }
+
+    fn make_sleep_instance(timeout: Option<f32>) -> TestInstanceCreator {
+        let command_generator = Box::new(move || TestCommand {
+            command: vec!["sleep".to_owned(), "1".to_owned()],
+            cwd: ".".to_owned(),
+            tmp_path: None,
+        });
+        TestInstanceCreator {
+            app_name: "test".to_owned(),
+            test_id: crate::TestId {
+                id: format!("{:?}", timeout),
+                rel_path: None,
+            },
+            allow_xge: false,
+            timeout,
+            command_generator,
+        }
+    }
+
+    #[test]
+    fn test_run_local_timeout_triggers() {
+        let (success, count) = count_results(
+            vec![make_sleep_instance(Some(0.001f32))],
+            RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: false,
+                repeat: 10,
+                rerun_if_failed: 0,
+            },
+        );
+        assert_eq!(success, false);
+        assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn test_run_local_out_of_order() {
+        let tests = [0.03f32, 0.01f32, 0.02f32]
+            .into_iter()
+            .map(|t| make_sleep_instance(Some(*t)))
+            .collect();
+
+        let (_, ids) = collect_results(
+            tests,
+            RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: false,
+                repeat: 1,
+                rerun_if_failed: 0,
+            },
+        );
+        // tests should finish in the order of their expected duration
+        assert_eq!(ids, vec!["Some(0.01)", "Some(0.02)", "Some(0.03)"]);
+    }
+}
