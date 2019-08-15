@@ -19,8 +19,8 @@ pub struct StreamResult {
     pub stdout: String,
 }
 
-/*pub fn xge() -> (
-     tokio_process::Child,
+pub fn xge() -> (
+    tokio_process::Child,
     impl Future<Output = std::io::Result<TcpStream>>,
 ) {
     let listener =
@@ -44,8 +44,7 @@ pub struct StreamResult {
         listener
             .incoming()
             .take(1)
-            .collect()
+            .collect::<Vec<_>>()
             .map(|mut v| v.remove(0)),
     )
 }
-*/
