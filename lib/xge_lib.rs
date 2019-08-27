@@ -1,7 +1,7 @@
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
-use tokio_process::CommandExt;
+use tokio_process::Command;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamRequest {
@@ -30,13 +30,13 @@ pub fn xge() -> (
     let parent = parent.parent().unwrap();
     let profile_xml = String::from(parent.join("profile.xml").to_str().unwrap());
     let xge_exe = String::from(parent.join("xge.exe").to_str().unwrap());
-    let client_process = std::process::Command::new("xgConsole")
+    let client_process = Command::new("xgConsole")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .arg(format!("/profile={}", profile_xml))
         .arg("/openmonitor")
         .arg(format!("/command={} client 127.0.0.1:{}", xge_exe, port))
-        .spawn_async()
+        .spawn()
         .expect("could not spawn XGE client!");
 
     (

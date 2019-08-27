@@ -4,13 +4,12 @@ use crate::report;
 use crate::runnable::TestCommand;
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
-//use futures::io::AsyncBufReadExt;
+use futures::future;
+use futures::select;
 use futures::stream::StreamExt;
-//use std::io::Cursor;
-use std::process::Command;
 use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
-use tokio_process::CommandExt;
+use tokio_process::Command;
 
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -94,7 +93,7 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                 |(mut success, mut callback, i, n), (test_instance, result)| {
                     callback(i + 1, n, test_instance, &result);
                     success &= result.exit_code == 0;
-                    futures::future::ready((success, callback, i + 1, n))
+                    future::ready((success, callback, i + 1, n))
                 },
             )
             .map(|(success, _, _, _)| success)
@@ -125,7 +124,7 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                         callback(i + 1, n, test_instance, &result);
                         success &= result.exit_code == 0;
                     }
-                    futures::future::ready((success, callback, i + 1, n))
+                    future::ready((success, callback, i + 1, n))
                 },
             )
             .map(|(success, _, _, _)| success)
@@ -214,6 +213,61 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
         futures::future::join(sender, receiver).await.1
     } else {
         // TODO: repeat failed tests
+
+        let mut next_test_creator = tests.iter();
+        let mut instances: Vec<TestInstance> = Vec::new();
+        let mut i_start = 0;
+        let mut i_end = 0;
+        let mut done = false;
+        let mut success = true;
+        while !done {
+            let mut send_future = if let Some(tic) = next_test_creator.next() {
+                i_start += 1;
+                let instance = tic.instantiate();
+                let request = xge_lib::StreamRequest {
+                    id: i_start as u64,
+                    title: instance.test_id.id.clone(),
+                    cwd: instance.command.cwd.clone(),
+                    command: instance.command.command.clone(),
+                    local: !tic.allow_xge,
+                };
+                instances.push(instance);
+                let message = serde_json::to_string(&request).unwrap();
+                writer.send(message).fuse()
+            } else {
+                future::Fuse::terminated()
+            };
+
+            let mut line = reader.next().map(|line| {
+                let line = line.unwrap().unwrap();
+                if line.starts_with("mwt ") {
+                    if line.starts_with("mwt done") {
+                        done = true;
+                        return;
+                    }
+                    let stream_result =
+                        serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+                    let result = TestCommandResult {
+                        exit_code: stream_result.exit_code,
+                        stdout: stream_result.stdout,
+                    };
+                    success &= stream_result.exit_code == 0;
+                    callback(
+                        i_end + 1,
+                        n,
+                        instances[stream_result.id as usize].clone(),
+                        &result,
+                    );
+                    i_end += 1;
+                }
+            });
+            loop {
+                select! {
+                    _ = send_future => break,
+                    _ = line => {}
+                };
+            }
+        }
         false
     }
 }
@@ -223,7 +277,7 @@ impl TestInstance {
         let output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
-            .output_async()
+            .output()
             .timeout(self.get_timeout_duration())
             .await;
         let output = match output {
