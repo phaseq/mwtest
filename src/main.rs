@@ -124,20 +124,26 @@ fn main() {
             out_dir: out_dir.clone(),
             tmp_dir: out_dir.join("tmp"),
         };
+        let repeat = matches
+            .value_of("repeat")
+            .unwrap()
+            .parse()
+            .expect("expected numeric value for repeat");
+        let repeat_if_failed = matches
+            .value_of("RERUN_IF_FAILED")
+            .unwrap()
+            .parse()
+            .expect("expected numeric value for repeat-if-failed");
+        let repeat_strategy = if repeat_if_failed != 0 {
+            scheduler::RepeatStrategy::RepeatIfFailed(repeat_if_failed)
+        } else {
+            scheduler::RepeatStrategy::Repeat(repeat)
+        };
         let run_config = scheduler::RunConfig {
             verbose: matches.is_present("verbose"),
             parallel: matches.is_present("threadpool"),
             xge: matches.is_present("xge"),
-            repeat: matches
-                .value_of("repeat")
-                .unwrap()
-                .parse()
-                .expect("expected numeric value for repeat"),
-            rerun_if_failed: matches
-                .value_of("RERUN_IF_FAILED")
-                .unwrap()
-                .parse()
-                .expect("expected numeric value for repeat-if-failed"),
+            repeat: repeat_strategy,
         };
         let success = cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
         if !success {

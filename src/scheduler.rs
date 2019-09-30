@@ -7,6 +7,8 @@ use crate::OutputPaths;
 use futures::future;
 use futures::select;
 use futures::stream::StreamExt;
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use tokio::codec::{Decoder, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::Command;
@@ -16,8 +18,13 @@ pub struct RunConfig {
     pub verbose: bool,
     pub parallel: bool,
     pub xge: bool,
-    pub repeat: usize,
-    pub rerun_if_failed: usize,
+    pub repeat: RepeatStrategy,
+}
+
+#[derive(Debug, Clone)]
+pub enum RepeatStrategy {
+    Repeat(usize),
+    RepeatIfFailed(usize),
 }
 
 pub fn run(
@@ -67,7 +74,11 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
     run_config: &RunConfig,
     callback: F,
 ) -> bool {
-    let n = tests.len() * run_config.repeat;
+    let n = tests.len()
+        * match run_config.repeat {
+            RepeatStrategy::Repeat(n) => n,
+            RepeatStrategy::RepeatIfFailed(_) => 1,
+        };
 
     let n_workers = if run_config.parallel || run_config.xge {
         num_cpus::get()
@@ -75,60 +86,63 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
         1
     };
 
-    if run_config.rerun_if_failed == 0 {
-        // repeat each test exactly `repeat` times
-        let instances = tests
-            .into_iter()
-            .flat_map(|tic| (0..run_config.repeat).map(move |_| tic.instantiate()));
-        futures::stream::iter(instances)
-            .map(|instance| {
-                async {
-                    let result = instance.run_async().await;
-                    (instance, result)
-                }
-            })
-            .buffer_unordered(n_workers)
-            .fold(
-                (true, callback, 0, n),
-                |(mut success, mut callback, i, n), (test_instance, result)| {
-                    callback(i + 1, n, test_instance, &result);
-                    success &= result.exit_code == 0;
-                    future::ready((success, callback, i + 1, n))
-                },
-            )
-            .map(|(success, _, _, _)| success)
-            .await
-    } else {
-        // repeat each test up to `rerun_if_failed` times (or less, if it succeeds earlier)
-        futures::stream::iter(tests)
-            .map(|tic| {
-                async {
-                    let mut results = vec![];
-                    for _ in 0..=run_config.rerun_if_failed {
-                        let instance = tic.instantiate();
+    match run_config.repeat {
+        RepeatStrategy::Repeat(repeat) => {
+            // repeat each test exactly `repeat` times
+            let instances = tests
+                .into_iter()
+                .flat_map(|tic| (0..repeat).map(move |_| tic.instantiate()));
+            futures::stream::iter(instances)
+                .map(|instance| {
+                    async {
                         let result = instance.run_async().await;
-                        let success = result.exit_code == 0;
-                        results.push((instance, result));
-                        if success {
-                            break;
-                        }
+                        (instance, result)
                     }
-                    (tic, results)
-                }
-            })
-            .buffer_unordered(n_workers)
-            .fold(
-                (true, callback, 0, n),
-                |(mut success, mut callback, i, n), (_tic, results)| {
-                    for (test_instance, result) in results {
-                        callback(i + 1, n, test_instance, &result);
+                })
+                .buffer_unordered(n_workers)
+                .fold(
+                    (true, callback, 0, repeat),
+                    |(mut success, mut callback, i, repeat), (test_instance, result)| {
+                        callback(i + 1, repeat, test_instance, &result);
                         success &= result.exit_code == 0;
+                        future::ready((success, callback, i + 1, repeat))
+                    },
+                )
+                .map(|(success, _, _, _)| success)
+                .await
+        }
+        RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
+            // repeat each test up to `repeat_if_failed` times (or less, if it succeeds earlier)
+            futures::stream::iter(tests)
+                .map(|tic| {
+                    async {
+                        let mut results = vec![];
+                        for _ in 0..=repeat_if_failed {
+                            let instance = tic.instantiate();
+                            let result = instance.run_async().await;
+                            let success = result.exit_code == 0;
+                            results.push((instance, result));
+                            if success {
+                                break;
+                            }
+                        }
+                        (tic, results)
                     }
-                    future::ready((success, callback, i + 1, n))
-                },
-            )
-            .map(|(success, _, _, _)| success)
-            .await
+                })
+                .buffer_unordered(n_workers)
+                .fold(
+                    (true, callback, 0, n),
+                    |(mut success, mut callback, i, n), (_tic, results)| {
+                        for (test_instance, result) in results {
+                            callback(i + 1, n, test_instance, &result);
+                            success &= result.exit_code == 0;
+                        }
+                        future::ready((success, callback, i + 1, n))
+                    },
+                )
+                .map(|(success, _, _, _)| success)
+                .await
+        }
     }
 }
 
@@ -154,7 +168,11 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
     run_config: &RunConfig,
     mut callback: F,
 ) -> bool {
-    let n = tests.len() * run_config.repeat;
+    let n = tests.len()
+        * match run_config.repeat {
+            RepeatStrategy::Repeat(n) => n,
+            RepeatStrategy::RepeatIfFailed(_) => 1,
+        };
 
     // TODO: non-parallelizable tests
     //let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
@@ -163,112 +181,130 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
     let (mut writer, mut reader) = LinesCodec::new()
         .framed(xge_socket.await.expect("remote client failed to connect"))
         .split();
-    if run_config.rerun_if_failed == 0 {
-        // repeat each test exactly `repeat` times
-        let instances: Vec<_> = tests
-            .into_iter()
-            .flat_map(|tic| (0..run_config.repeat).map(move |_| (tic.allow_xge, tic.instantiate())))
-            .collect();
-        let sender = async {
-            for i in 0..instances.len() {
-                let (allow_xge, instance) = &instances[i];
-                let request = xge_lib::StreamRequest {
-                    id: i as u64,
-                    title: instance.test_id.id.clone(),
-                    cwd: instance.command.cwd.clone(),
-                    command: instance.command.command.clone(),
-                    local: !allow_xge,
-                };
-                let message = serde_json::to_string(&request).unwrap();
-                writer.send(message).await.expect("when does this fail?");
-            }
-        };
-        let receiver = async {
-            let mut i = 0;
-            let mut success = true;
-            while let Some(line) = reader.next().await {
-                let line = line.unwrap();
-                if line.starts_with("mwt ") {
-                    if line.starts_with("mwt done") {
-                        break;
-                    }
-                    let stream_result =
-                        serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
-                    let result = TestCommandResult {
-                        exit_code: stream_result.exit_code,
-                        stdout: stream_result.stdout,
+    match run_config.repeat {
+        RepeatStrategy::Repeat(repeat) => {
+            // repeat each test exactly `repeat` times
+            let instances: Vec<_> = tests
+                .into_iter()
+                .flat_map(|tic| (0..repeat).map(move |_| (tic.allow_xge, tic.instantiate())))
+                .collect();
+            let sender = async {
+                for i in 0..instances.len() {
+                    let (allow_xge, instance) = &instances[i];
+                    let request = xge_lib::StreamRequest {
+                        id: i as u64,
+                        title: instance.test_id.id.clone(),
+                        cwd: instance.command.cwd.clone(),
+                        command: instance.command.command.clone(),
+                        local: !allow_xge,
                     };
-                    success &= stream_result.exit_code == 0;
-                    callback(
-                        i + 1,
-                        n,
-                        instances[stream_result.id as usize].1.clone(),
-                        &result,
-                    );
-                    i += 1;
+                    let message = serde_json::to_string(&request).unwrap();
+                    writer.send(message).await.expect("when does this fail?");
                 }
-            }
-            success
-        };
-        futures::future::join(sender, receiver).await.1
-    } else {
-        // TODO: repeat failed tests
-
-        let mut next_test_creator = tests.iter();
-        let mut instances: Vec<TestInstance> = Vec::new();
-        let mut i_start = 0;
-        let mut i_end = 0;
-        let mut done = false;
-        let mut success = true;
-        while !done {
-            let mut send_future = if let Some(tic) = next_test_creator.next() {
-                i_start += 1;
-                let instance = tic.instantiate();
-                let request = xge_lib::StreamRequest {
-                    id: i_start as u64,
-                    title: instance.test_id.id.clone(),
-                    cwd: instance.command.cwd.clone(),
-                    command: instance.command.command.clone(),
-                    local: !tic.allow_xge,
-                };
-                instances.push(instance);
-                let message = serde_json::to_string(&request).unwrap();
-                writer.send(message).fuse()
-            } else {
-                future::Fuse::terminated()
             };
-
-            let mut line = reader.next().map(|line| {
-                let line = line.unwrap().unwrap();
-                if line.starts_with("mwt ") {
-                    if line.starts_with("mwt done") {
-                        done = true;
-                        return;
+            let receiver = async {
+                let mut i = 0;
+                let mut success = true;
+                while let Some(line) = reader.next().await {
+                    let line = line.unwrap();
+                    if line.starts_with("mwt ") {
+                        if line.starts_with("mwt done") {
+                            break;
+                        }
+                        let stream_result =
+                            serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+                        let result = TestCommandResult {
+                            exit_code: stream_result.exit_code,
+                            stdout: stream_result.stdout,
+                        };
+                        success &= stream_result.exit_code == 0;
+                        callback(
+                            i + 1,
+                            n,
+                            instances[stream_result.id as usize].1.clone(),
+                            &result,
+                        );
+                        i += 1;
                     }
-                    let stream_result =
-                        serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
-                    let result = TestCommandResult {
-                        exit_code: stream_result.exit_code,
-                        stdout: stream_result.stdout,
-                    };
-                    success &= stream_result.exit_code == 0;
-                    callback(
-                        i_end + 1,
-                        n,
-                        instances[stream_result.id as usize].clone(),
-                        &result,
-                    );
-                    i_end += 1;
                 }
-            });
-            loop {
-                select! {
-                    _ = send_future => break,
-                    _ = line => {}
-                };
-            }
+                success
+            };
+            futures::future::join(sender, receiver).await.1
         }
-        false
+        RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
+            // TODO: repeat failed tests
+
+            let indices: Mutex<VecDeque<usize>> = Mutex::new((0..tests.len()).collect());
+            let creators: Mutex<Vec<(TestInstanceCreator, Option<TestInstance>, usize)>> =
+                Mutex::new(tests.into_iter().map(|tic| (tic, None, 0)).collect());
+            let mut done = false;
+            let mut success = true;
+            while !done {
+                let mut line = reader.next().map(|line| {
+                    let line = line.unwrap().unwrap();
+                    if line.starts_with("mwt ") {
+                        if line.starts_with("mwt done") {
+                            done = true;
+                            return;
+                        }
+                        let stream_result =
+                            serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+                        let result = TestCommandResult {
+                            exit_code: stream_result.exit_code,
+                            stdout: stream_result.stdout,
+                        };
+                        success &= stream_result.exit_code == 0;
+                        callback(
+                            stream_result.id as usize,
+                            n,
+                            creators.lock().unwrap()[stream_result.id as usize]
+                                .1
+                                .clone()
+                                .unwrap()
+                                .clone(),
+                            &result,
+                        );
+                        if !success {
+                            let (_tic, _ti, count) =
+                                &mut creators.lock().unwrap()[stream_result.id as usize];
+                            if *count < repeat_if_failed {
+                                *count += 1;
+                                indices.lock().unwrap().push_back(stream_result.id as usize);
+                            }
+                        }
+                    }
+                });
+
+                let send_idx = indices.lock().unwrap().pop_front();
+                match send_idx {
+                    None => line.await,
+                    Some(send_idx) => {
+                        let (tic, ti, _count) = &mut creators.lock().unwrap()[send_idx];
+                        let mut send_future = {
+                            let instance = tic.instantiate();
+                            let request = xge_lib::StreamRequest {
+                                id: send_idx as u64,
+                                title: instance.test_id.id.clone(),
+                                cwd: instance.command.cwd.clone(),
+                                command: instance.command.command.clone(),
+                                local: !tic.allow_xge,
+                            };
+                            *ti = Some(instance);
+                            let message = serde_json::to_string(&request).unwrap();
+                            writer.send(message).fuse()
+                        };
+
+                        loop {
+                            select! {
+                                _ = send_future => {},
+                                _ = line => {}
+                            };
+                        }
+                    }
+                }
+            }
+            false
+        }
     }
 }
 
@@ -352,6 +388,25 @@ mod tests {
         vec![test]
     }
 
+    fn make_failing_ls_instance() -> Vec<TestInstanceCreator> {
+        let command_generator = Box::new(move || TestCommand {
+            command: vec!["ls".to_string(), "/nonexistent-file".to_string()],
+            cwd: ".".to_owned(),
+            tmp_path: None,
+        });
+        let test = TestInstanceCreator {
+            app_name: "test".to_owned(),
+            test_id: crate::TestId {
+                id: "test_id".to_owned(),
+                rel_path: None,
+            },
+            allow_xge: false,
+            timeout: None,
+            command_generator,
+        };
+        vec![test]
+    }
+
     fn count_results(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
         let mut count = 0;
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
@@ -387,8 +442,7 @@ mod tests {
                 verbose: false,
                 parallel: true,
                 xge: false,
-                repeat: 1,
-                rerun_if_failed: 0,
+                repeat: RepeatStrategy::Repeat(1),
             },
         );
         assert_eq!(success, true);
@@ -403,12 +457,26 @@ mod tests {
                 verbose: false,
                 parallel: true,
                 xge: false,
-                repeat: 10,
-                rerun_if_failed: 0,
+                repeat: RepeatStrategy::Repeat(10),
             },
         );
         assert_eq!(success, true);
         assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn test_run_local_repeat_if_failed() {
+        let (success, count) = count_results(
+            make_failing_ls_instance(),
+            RunConfig {
+                verbose: false,
+                parallel: false,
+                xge: false,
+                repeat: RepeatStrategy::RepeatIfFailed(5),
+            },
+        );
+        assert_eq!(success, false);
+        assert_eq!(count, 6);
     }
 
     fn make_sleep_instance(timeout: Option<f32>) -> TestInstanceCreator {
@@ -437,8 +505,7 @@ mod tests {
                 verbose: false,
                 parallel: true,
                 xge: false,
-                repeat: 10,
-                rerun_if_failed: 0,
+                repeat: RepeatStrategy::Repeat(10),
             },
         );
         assert_eq!(success, false);
@@ -458,8 +525,7 @@ mod tests {
                 verbose: false,
                 parallel: true,
                 xge: false,
-                repeat: 1,
-                rerun_if_failed: 0,
+                repeat: RepeatStrategy::Repeat(1),
             },
         );
         // tests should finish in the order of their expected duration
