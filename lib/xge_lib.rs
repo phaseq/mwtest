@@ -48,3 +48,31 @@ pub fn xge() -> (
             .map(|mut v| v.remove(0)),
     )
 }
+
+pub fn xge_mock() -> (
+    tokio_process::Child,
+    impl Future<Output = std::io::Result<TcpStream>>,
+) {
+    let listener =
+        TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let parent = std::env::current_exe().unwrap();
+    let parent = parent.parent().unwrap().parent().unwrap();
+    let xge_mock = String::from(parent.join("mock_xge").to_str().unwrap());
+    println!("mock: {}", xge_mock);
+    let client_process = Command::new(xge_mock)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .arg(format!("127.0.0.1:{}", port))
+        .spawn()
+        .expect("could not spawn XGE client!");
+
+    (
+        client_process,
+        listener
+            .incoming()
+            .take(1)
+            .collect::<Vec<_>>()
+            .map(|mut v| v.remove(0)),
+    )
+}

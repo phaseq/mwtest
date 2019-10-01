@@ -11,6 +11,9 @@ fn accept_commands(stream: TcpStream) {
     let reader = io::BufReader::new(stream);
     for cmd_str in reader.lines() {
         let cmd_str = cmd_str.unwrap();
+        if cmd_str.starts_with("mwt done") {
+            break;
+        }
         let request: serde_json::Result<xge_lib::StreamRequest> = serde_json::from_str(&cmd_str);
         if let Ok(request) = request {
             let this_exe = env::current_exe().unwrap();

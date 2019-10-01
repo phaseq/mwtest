@@ -4,12 +4,12 @@ use crate::report;
 use crate::runnable::TestCommand;
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
-use futures::future;
+use futures::future::{self, Either};
 use futures::select;
-use futures::stream::StreamExt;
 use std::collections::VecDeque;
+use std::io::Write;
 use std::sync::Mutex;
-use tokio::codec::{Decoder, LinesCodec};
+use tokio::codec::{Decoder, FramedRead, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::Command;
 
@@ -157,9 +157,12 @@ async fn run_report_xge(
         input_paths.testcases_root.to_str().unwrap(),
         run_config.verbose,
     );
-    run_xge(tests, run_config, |i, n, test_instance, result| {
-        report.add(i, n, test_instance, &result)
-    })
+    run_xge(
+        tests,
+        run_config,
+        |i, n, test_instance, result| report.add(i, n, test_instance, &result),
+        false,
+    )
     .await
 }
 
@@ -167,6 +170,7 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
     tests: Vec<TestInstanceCreator>,
     run_config: &RunConfig,
     mut callback: F,
+    mock: bool,
 ) -> bool {
     let n = tests.len()
         * match run_config.repeat {
@@ -175,12 +179,22 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
         };
 
     // TODO: non-parallelizable tests
-    //let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
+    // let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
 
-    let (mut _child, xge_socket) = xge_lib::xge();
-    let (mut writer, mut reader) = LinesCodec::new()
+    let (mut child, xge_socket) = if mock {
+        let (c, s) = xge_lib::xge_mock();
+        (c, Either::Left(s))
+    } else {
+        let (c, s) = xge_lib::xge();
+        (c, Either::Right(s))
+    };
+    let (mut writer, mut _reader) = LinesCodec::new()
         .framed(xge_socket.await.expect("remote client failed to connect"))
         .split();
+    let mut reader = FramedRead::new(
+        child.stdout().take().expect("failed to connect to stdout"),
+        LinesCodec::new(),
+    );
     match run_config.repeat {
         RepeatStrategy::Repeat(repeat) => {
             // repeat each test exactly `repeat` times
@@ -190,6 +204,7 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                 .collect();
             let sender = async {
                 for i in 0..instances.len() {
+                    std::io::stdout().flush().ok().expect("blufglvic");
                     let (allow_xge, instance) = &instances[i];
                     let request = xge_lib::StreamRequest {
                         id: i as u64,
@@ -199,12 +214,14 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                         local: !allow_xge,
                     };
                     let message = serde_json::to_string(&request).unwrap();
-                    writer.send(message).await.expect("when does this fail?");
+                    writer.send(message).await.unwrap();
                 }
+                writer.send("mwt done".to_string()).await.unwrap();
             };
             let receiver = async {
                 let mut i = 0;
                 let mut success = true;
+
                 while let Some(line) = reader.next().await {
                     let line = line.unwrap();
                     if line.starts_with("mwt ") {
@@ -232,7 +249,7 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
             futures::future::join(sender, receiver).await.1
         }
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
-            // TODO: repeat failed tests
+            // repeat failed tests
 
             let indices: Mutex<VecDeque<usize>> = Mutex::new((0..tests.len()).collect());
             let creators: Mutex<Vec<(TestInstanceCreator, Option<TestInstance>, usize)>> =
@@ -419,6 +436,23 @@ mod tests {
         (success, count)
     }
 
+    fn count_results_xge(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
+        let mut count = 0;
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let success = runtime.block_on(async {
+            run_xge(
+                tests,
+                &run_config,
+                |_i, _n, _test_instance, _result| {
+                    count += 1;
+                },
+                true,
+            )
+            .await
+        });
+        (success, count)
+    }
+
     fn collect_results(
         tests: Vec<TestInstanceCreator>,
         run_config: RunConfig,
@@ -433,6 +467,26 @@ mod tests {
         });
         (success, ids)
     }
+
+    /*fn collect_results_xge(
+        tests: Vec<TestInstanceCreator>,
+        run_config: RunConfig,
+    ) -> (bool, Vec<String>) {
+        let mut ids = vec![];
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let success = runtime.block_on(async {
+            run_xge(
+                tests,
+                &run_config,
+                |_i, _n, test_instance, _result| {
+                    ids.push(test_instance.test_id.id);
+                },
+                true,
+            )
+            .await
+        });
+        (success, ids)
+    }*/
 
     #[test]
     fn test_run_local_once() {
@@ -450,7 +504,22 @@ mod tests {
     }
 
     #[test]
-    fn test_run_local_repeat() {
+    fn test_run_local_once_xge() {
+        let (success, count) = count_results_xge(
+            make_whoami_instance(),
+            RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: true,
+                repeat: RepeatStrategy::Repeat(1),
+            },
+        );
+        assert_eq!(success, true);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_run_repeat() {
         let (success, count) = count_results(
             make_whoami_instance(),
             RunConfig {
@@ -465,7 +534,22 @@ mod tests {
     }
 
     #[test]
-    fn test_run_local_repeat_if_failed() {
+    fn test_run_repeat_xge() {
+        let (success, count) = count_results_xge(
+            make_whoami_instance(),
+            RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: true,
+                repeat: RepeatStrategy::Repeat(10),
+            },
+        );
+        assert_eq!(success, true);
+        assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn test_run_repeat_if_failed() {
         let (success, count) = count_results(
             make_failing_ls_instance(),
             RunConfig {
@@ -478,6 +562,21 @@ mod tests {
         assert_eq!(success, false);
         assert_eq!(count, 6);
     }
+
+    /*#[test]
+    fn test_run_repeat_if_failed_xge() {
+        let (success, count) = count_results_xge(
+            make_failing_ls_instance(),
+            RunConfig {
+                verbose: false,
+                parallel: false,
+                xge: true,
+                repeat: RepeatStrategy::RepeatIfFailed(5),
+            },
+        );
+        assert_eq!(success, false);
+        assert_eq!(count, 6);
+    }*/
 
     fn make_sleep_instance(timeout: Option<f32>) -> TestInstanceCreator {
         let command_generator = Box::new(move || TestCommand {
