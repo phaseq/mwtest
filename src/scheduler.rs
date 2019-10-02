@@ -176,10 +176,6 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
             RepeatStrategy::Repeat(n) => n,
             RepeatStrategy::RepeatIfFailed(_) => 1,
         };
-
-    // TODO: non-parallelizable tests
-    // let (xge_tests, local_tests): (Vec<_>, Vec<_>) = tests.into_iter().partition(|t| t.allow_xge);
-
     let (mut child, xge_socket) = if mock {
         let (c, s) = xge_lib::xge_mock();
         (c, Either::Left(s))
@@ -202,8 +198,7 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                 .flat_map(|tic| (0..repeat).map(move |_| (tic.allow_xge, tic.instantiate())))
                 .collect();
             let sender = async {
-                for i in 0..instances.len() {
-                    let (allow_xge, instance) = &instances[i];
+                for (i, (allow_xge, instance)) in instances.iter().enumerate() {
                     let request = xge_lib::StreamRequest {
                         id: i as u64,
                         title: instance.test_id.id.clone(),
@@ -232,13 +227,13 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                             stdout: stream_result.stdout,
                         };
                         success &= stream_result.exit_code == 0;
+                        i += 1;
                         callback(
-                            i + 1,
+                            i,
                             n,
                             instances[stream_result.id as usize].1.clone(),
                             &result,
                         );
-                        i += 1;
                         if i == instances.len() {
                             break;
                         }
@@ -252,6 +247,7 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
             // repeat failed tests
 
             let queue = Mutex::new(TestQueue::new(tests));
+            let mut i = 0;
             let mut done = false;
             let mut overall_success = true;
             while !done {
@@ -277,7 +273,8 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                             )
                         };
                         overall_success &= success;
-                        callback(stream_result.id as usize, n, test_instance, &result);
+                        i += 1;
+                        callback(i, n, test_instance, &result);
                         done = { queue.lock().unwrap().is_done() };
                     }
                 });
@@ -351,7 +348,7 @@ impl TestQueue {
     }
 
     fn is_done(&self) -> bool {
-        self.in_flight == 0 && self.indices.len() == 0
+        self.in_flight == 0 && self.indices.is_empty()
     }
 }
 
