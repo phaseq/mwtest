@@ -251,13 +251,9 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
             // repeat failed tests
 
-            // TODO: make this threadsafe (combine into one mutex)
-            let indices: Mutex<VecDeque<usize>> = Mutex::new((0..tests.len()).collect());
-            let creators: Mutex<Vec<(TestInstanceCreator, Option<TestInstance>, usize)>> =
-                Mutex::new(tests.into_iter().map(|tic| (tic, None, 0)).collect());
-            let in_flight = Mutex::new(0usize);
+            let queue = Mutex::new(TestQueue::new(tests));
             let mut done = false;
-            let mut success = true;
+            let mut overall_success = true;
             while !done {
                 let mut line = reader.next().map(|line| {
                     let line = line.unwrap().unwrap();
@@ -272,42 +268,24 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                             exit_code: stream_result.exit_code,
                             stdout: stream_result.stdout,
                         };
-                        *in_flight.lock().unwrap() -= 1;
-                        success &= stream_result.exit_code == 0;
-                        callback(
-                            stream_result.id as usize,
-                            n,
-                            creators.lock().unwrap()[stream_result.id as usize]
-                                .1
-                                .clone()
-                                .unwrap()
-                                .clone(),
-                            &result,
-                        );
-                        if stream_result.exit_code != 0 {
-                            let (_tic, _ti, count) =
-                                &mut creators.lock().unwrap()[stream_result.id as usize];
-                            if *count < repeat_if_failed {
-                                *count += 1;
-                                indices.lock().unwrap().push_back(stream_result.id as usize);
-                            }
-                        }
-                        if *in_flight.lock().unwrap() == 0 && indices.lock().unwrap().len() == 0 {
-                            done = true;
-                        }
+                        let success = stream_result.exit_code == 0;
+                        let test_instance = {
+                            queue.lock().unwrap().return_test(
+                                stream_result.id as usize,
+                                success,
+                                repeat_if_failed,
+                            )
+                        };
+                        overall_success &= success;
+                        callback(stream_result.id as usize, n, test_instance, &result);
+                        done = { queue.lock().unwrap().is_done() };
                     }
                 });
 
-                let send_idx = indices.lock().unwrap().pop_front();
-                match send_idx {
+                let next_test = { queue.lock().unwrap().next_test() };
+                match next_test {
                     None => line.await,
-                    Some(send_idx) => {
-                        let (allow_xge, instance) = {
-                            let (tic, ti, _count) = &mut creators.lock().unwrap()[send_idx];
-                            let instance = tic.instantiate();
-                            *ti = Some(instance.clone());
-                            (tic.allow_xge, instance)
-                        };
+                    Some((send_idx, instance, allow_xge)) => {
                         let mut send_future = {
                             let request = xge_lib::StreamRequest {
                                 id: send_idx as u64,
@@ -317,7 +295,6 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                                 local: !allow_xge,
                             };
                             let message = serde_json::to_string(&request).unwrap();
-                            *in_flight.lock().unwrap() += 1;
                             writer.send(message).fuse()
                         };
 
@@ -330,8 +307,51 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                     }
                 }
             }
-            false
+            overall_success
         }
+    }
+}
+
+struct TestQueue {
+    indices: VecDeque<usize>,
+    creators: Vec<(TestInstanceCreator, Option<TestInstance>, usize)>,
+    in_flight: usize,
+}
+impl TestQueue {
+    fn new(tests: Vec<TestInstanceCreator>) -> TestQueue {
+        TestQueue {
+            indices: (0..tests.len()).collect(),
+            creators: tests.into_iter().map(|tic| (tic, None, 0)).collect(),
+            in_flight: 0,
+        }
+    }
+    fn next_test(&mut self) -> Option<(usize, TestInstance, bool)> {
+        match self.indices.pop_front() {
+            Some(send_idx) => {
+                let (tic, ti, _count) = &mut self.creators[send_idx];
+                let instance = tic.instantiate();
+                *ti = Some(instance.clone());
+                self.in_flight += 1;
+                Some((send_idx, instance, tic.allow_xge))
+            }
+            None => None,
+        }
+    }
+
+    fn return_test(&mut self, id: usize, success: bool, repeat_if_failed: usize) -> TestInstance {
+        self.in_flight -= 1;
+        if !success {
+            let (_tic, _ti, count) = &mut self.creators[id];
+            if *count < repeat_if_failed {
+                *count += 1;
+                self.indices.push_back(id);
+            }
+        }
+        self.creators[id].1.take().unwrap()
+    }
+
+    fn is_done(&self) -> bool {
+        self.in_flight == 0 && self.indices.len() == 0
     }
 }
 
