@@ -59,7 +59,10 @@ async fn run_report_local(
 ) -> bool {
     let mut report = report::Report::new(
         &output_paths.out_dir,
-        input_paths.testcases_root.to_str().unwrap(),
+        input_paths
+            .testcases_dir
+            .to_str()
+            .expect("Couldn't convert path to string!"),
         run_config.verbose,
     );
     run_local(tests, run_config, |i, n, test_instance, result| {
@@ -153,7 +156,10 @@ async fn run_report_xge(
 ) -> bool {
     let mut report = report::Report::new(
         &output_paths.out_dir,
-        input_paths.testcases_root.to_str().unwrap(),
+        input_paths
+            .testcases_dir
+            .to_str()
+            .expect("Couldn't convert path to string!"),
         run_config.verbose,
     );
     run_xge(
@@ -265,8 +271,8 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                             stdout: stream_result.stdout,
                         };
                         let success = stream_result.exit_code == 0;
-                        let test_instance = {
-                            queue.lock().unwrap().return_test(
+                        let (test_instance, is_done) = {
+                            queue.lock().unwrap().return_response(
                                 stream_result.id as usize,
                                 success,
                                 repeat_if_failed,
@@ -275,22 +281,15 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                         overall_success &= success;
                         i += 1;
                         callback(i, n, test_instance, &result);
-                        done = { queue.lock().unwrap().is_done() };
+                        done = is_done;
                     }
                 });
 
-                let next_test = { queue.lock().unwrap().next_test() };
-                match next_test {
+                let next_request = { queue.lock().unwrap().next_request() };
+                match next_request {
                     None => line.await,
-                    Some((send_idx, instance, allow_xge)) => {
+                    Some(request) => {
                         let mut send_future = {
-                            let request = xge_lib::StreamRequest {
-                                id: send_idx as u64,
-                                title: instance.test_id.id.clone(),
-                                cwd: instance.command.cwd.clone(),
-                                command: instance.command.command.clone(),
-                                local: !allow_xge,
-                            };
                             let message = serde_json::to_string(&request).unwrap();
                             writer.send(message).fuse()
                         };
@@ -322,20 +321,31 @@ impl TestQueue {
             in_flight: 0,
         }
     }
-    fn next_test(&mut self) -> Option<(usize, TestInstance, bool)> {
+    fn next_request(&mut self) -> Option<xge_lib::StreamRequest> {
         match self.indices.pop_front() {
             Some(send_idx) => {
                 let (tic, ti, _count) = &mut self.creators[send_idx];
                 let instance = tic.instantiate();
                 *ti = Some(instance.clone());
                 self.in_flight += 1;
-                Some((send_idx, instance, tic.allow_xge))
+
+                Some(xge_lib::StreamRequest {
+                    id: send_idx as u64,
+                    title: instance.test_id.id.clone(),
+                    cwd: instance.command.cwd.clone(),
+                    command: instance.command.command.clone(),
+                    local: !tic.allow_xge,
+                })
             }
             None => None,
         }
     }
-
-    fn return_test(&mut self, id: usize, success: bool, repeat_if_failed: usize) -> TestInstance {
+    fn return_response(
+        &mut self,
+        id: usize,
+        success: bool,
+        repeat_if_failed: usize,
+    ) -> (TestInstance, bool) {
         self.in_flight -= 1;
         if !success {
             let (_tic, _ti, count) = &mut self.creators[id];
@@ -344,9 +354,8 @@ impl TestQueue {
                 self.indices.push_back(id);
             }
         }
-        self.creators[id].1.take().unwrap()
+        (self.creators[id].1.take().unwrap(), self.is_done())
     }
-
     fn is_done(&self) -> bool {
         self.in_flight == 0 && self.indices.is_empty()
     }
@@ -354,6 +363,7 @@ impl TestQueue {
 
 impl TestInstance {
     async fn run_async(&self) -> TestCommandResult {
+        println!("{:?}", self.command.command);
         let output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
@@ -405,7 +415,7 @@ impl TestInstance {
     fn get_timeout_duration(&self) -> std::time::Duration {
         // TODO: is there a more elegant way to handle this?
         let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
-        std::time::Duration::from_millis((timeout * 1000f32) as u64)
+        std::time::Duration::from_millis((timeout * 1000.0) as u64)
     }
 }
 

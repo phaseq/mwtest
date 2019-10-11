@@ -14,7 +14,7 @@ pub fn create_run_commands<'a>(
             for test_id in &group.test_ids {
                 let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
                 let generator = test_command_generator(
-                    &app.app.properties.command_template,
+                    &app.app.command,
                     &input_str,
                     cwd,
                     output_paths.tmp_dir.clone(),
@@ -75,15 +75,15 @@ fn test_id_to_input(
     app: &config::App,
 ) -> (String, String) {
     if let Some(rel_path) = &test_id.rel_path {
-        let full_path = input_paths.testcases_root.join(&rel_path);
+        let full_path = input_paths.testcases_dir.join(&rel_path);
         if full_path.is_dir() {
             // machsim case
-            let full_path = input_paths.testcases_root.join(&rel_path);
+            let full_path = input_paths.testcases_dir.join(&rel_path);
             (
                 full_path.to_str().unwrap().to_string(),
                 full_path.to_str().unwrap().to_string(),
             )
-        } else if let Some(cwd) = &app.layout.cwd {
+        } else if let Some(cwd) = &app.build.cwd {
             // cncsim case
             (full_path.to_str().unwrap().to_string(), cwd.clone())
         } else {
@@ -96,7 +96,7 @@ fn test_id_to_input(
         // gtest case
         (
             test_id.id.clone(),
-            app.layout
+            app.build
                 .cwd
                 .clone()
                 .expect("You need to specify a CWD for gtests (see preset)."),
@@ -111,11 +111,11 @@ fn test_command_generator(
     tmp_root: PathBuf,
 ) -> Box<CommandGenerator> {
     let command = command_template.apply("{{input}}", &input);
-    if command.has_pattern("{{tmp_path}}") {
+    if command.has_pattern("{{out_dir}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
             let tmp_path = tmp_dir.to_str().unwrap().to_string();
-            let command = command.apply("{{tmp_path}}", &tmp_path);
+            let command = command.apply("{{out_dir}}", &tmp_path);
             std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
             TestCommand {
                 command: command.0.clone(),
@@ -123,11 +123,11 @@ fn test_command_generator(
                 tmp_path: Some(tmp_dir),
             }
         })
-    } else if command.has_pattern("{{tmp_file}}") {
+    } else if command.has_pattern("{{out_file}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
             let tmp_path = tmp_dir.to_str().unwrap().to_string();
-            let command = command.apply("{{tmp_file}}", &tmp_path);
+            let command = command.apply("{{out_file}}", &tmp_path);
             TestCommand {
                 command: command.0.clone(),
                 cwd: cwd.to_string(),

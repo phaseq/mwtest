@@ -1,173 +1,201 @@
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
-pub struct AppPropertiesFile(HashMap<String, AppProperties>);
+pub struct AppsConfig(pub HashMap<String, AppConfig>);
+impl AppsConfig {
+    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_reader(File::open(
+            InputPaths::mwtest_config_path(),
+        )?)?)
+    }
+
+    pub fn app_names(self: &Self) -> Vec<String> {
+        let mut names: Vec<_> = self.0.iter().map(|(n, _)| n.to_string()).collect();
+        names.sort();
+        names
+    }
+
+    pub fn select_build_and_preset(
+        self: &Self,
+        app_names: &Vec<&str>,
+        input_paths: &InputPaths,
+    ) -> Apps {
+        let build_type = input_paths
+            .build_type
+            .as_ref()
+            .expect("Please specify --build-type :)");
+        let presets = [input_paths.preset.to_string()];
+        Apps(
+            self.0
+                .iter()
+                .filter(|(name, _config)| app_names.iter().any(|n| n == name || *n == "all"))
+                .map(|(name, config)| {
+                    let build_config = config
+                        .builds
+                        .get(build_type)
+                        .unwrap_or_else(|| panic!("build '{}' not found in '{}'", build_type, name))
+                        .clone();
+                    let tests = presets
+                        .iter()
+                        .filter_map(|p| config.tests.get(p))
+                        .cloned()
+                        .collect();
+                    (
+                        name.to_string(),
+                        App::from(
+                            &input_paths,
+                            config.command.clone(),
+                            config.responsible.clone(),
+                            build_config.clone(),
+                            tests,
+                            config.input_is_dir,
+                        ),
+                    )
+                })
+                .collect(),
+        )
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct AppProperties {
-    pub command_template: CommandTemplate,
+pub struct AppConfig {
+    pub command: CommandTemplate,
+    pub responsible: String,
+    pub builds: HashMap<String, BuildConfig>,
+    pub tests: HashMap<String, TestPresetConfig>,
     #[serde(default)]
     pub input_is_dir: bool,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(transparent)]
-pub struct BuildLayoutFile {
-    pub apps: HashMap<String, AppLayout>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct AppLayout {
-    pub solution: Option<String>,
-    pub project: Option<String>,
-    pub exe: String,
-    pub cwd: Option<String>,
-    pub dll: Option<String>,
-}
-
 #[derive(Debug)]
-pub struct Apps(HashMap<String, App>);
+pub struct Apps(pub HashMap<String, App>);
 impl Apps {
-    fn open(
-        properties_path: &Path,
-        build_layout_path: &Path,
-        build_dir: &Path,
-    ) -> Result<Apps, Box<dyn std::error::Error>> {
-        let properties: AppPropertiesFile = serde_json::from_reader(File::open(properties_path)?)?;
-        let layout: BuildLayoutFile = serde_json::from_reader(File::open(build_layout_path)?)?;
-        let apps = layout
-            .apps
-            .iter()
-            .map(|(k, v)| {
-                let mut app_layout = v.clone();
-                apply_build_dir(&mut app_layout, &build_dir);
-                let mut app_props = properties.0[k].clone();
-                apply_layout(&mut app_props, &app_layout);
-                (
-                    (*k).clone(),
-                    App {
-                        properties: app_props,
-                        layout: app_layout,
-                    },
-                )
-            })
-            .collect();
-        Ok(Apps(apps))
-    }
-
-    pub fn get(&self, app_name: &str) -> Option<&App> {
-        self.0.get(app_name)
-    }
-
-    pub fn app_names(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
+    pub fn app_names(self: &Self) -> Vec<String> {
+        let mut names: Vec<_> = self.0.iter().map(|(n, _)| n.clone()).collect();
+        names.sort();
+        names
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct App {
-    pub properties: AppProperties,
-    pub layout: AppLayout,
+    pub command: CommandTemplate,
+    pub responsible: String,
+    pub build: BuildConfig,
+    pub tests: Vec<TestPresetConfig>,
+    pub input_is_dir: bool,
 }
-impl App {}
-fn apply_layout(app_props: &mut AppProperties, app_layout: &AppLayout) {
-    app_props.command_template = app_props
-        .command_template
-        .apply("{{exe}}", app_layout.exe.as_str());
-    if let Some(dll) = &app_layout.dll {
-        app_props.command_template = app_props.command_template.apply("{{dll}}", dll);
-    }
-}
-fn apply_build_dir(app_layout: &mut AppLayout, build_dir: &Path) {
-    if let Some(solution) = &app_layout.solution {
-        app_layout.solution = Some(
-            build_dir
-                .join(solution.clone())
-                .to_str()
-                .unwrap()
-                .to_string(),
-        );
-    }
-    app_layout.exe = build_dir
-        .join(app_layout.exe.clone())
-        .to_str()
-        .unwrap()
-        .to_string();
-    if let Some(dll) = &app_layout.dll {
-        app_layout.dll = Some(build_dir.join(dll.clone()).to_str().unwrap().to_string());
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TestGroupFile(HashMap<String, TestGroups>);
-impl TestGroupFile {
-    pub fn open(path: &Path) -> Result<TestGroupFile, Box<dyn std::error::Error>> {
-        let file = File::open(path)?;
-        let content = serde_json::from_reader(file)?;
-        Ok(content)
-    }
-
-    pub fn get(&self, app_name: &str) -> Option<&TestGroups> {
-        self.0.get(app_name)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TestGroups {
-    pub id_pattern: String,
-    pub groups: Vec<TestGroup>,
-}
-impl TestGroups {
-    pub fn generate_test_inputs(
-        &self,
-        group: &TestGroup,
-        app: &App,
+impl App {
+    fn from(
         input_paths: &InputPaths,
-    ) -> Vec<crate::TestId> {
-        if group.find_glob.is_some() {
-            group.generate_path_inputs(&app.properties, &input_paths, &self.id_pattern)
-        } else if group.find_gtest.is_some() {
-            group.generate_gtest_inputs(&app)
-        } else {
-            panic!("no test generator defined!");
+        mut command: CommandTemplate,
+        responsible: String,
+        build: BuildConfig,
+        tests: Vec<TestPresetConfig>,
+        input_is_dir: bool,
+    ) -> Self {
+        if command.has_pattern("{{exe}}") {
+            let exe = build.exe.as_ref().unwrap();
+            command = command.apply("{{exe}}", &exe);
+        }
+        if command.has_pattern("{{dll}}") {
+            let dll = build.dll.as_ref().unwrap();
+            command = command.apply("{{dll}}", &dll);
+        }
+        if command.has_pattern("{{dev_dir}}") {
+            command = command.apply(
+                "{{dev_dir}}",
+                input_paths
+                    .dev_dir
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("Please specify --dev-dir :)"))
+                    .to_str()
+                    .unwrap(),
+            );
+        }
+        if command.has_pattern("{{build_dir}}") {
+            command = command.apply(
+                "{{build_dir}}",
+                input_paths
+                    .dev_dir
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("Please specify --build-dir :)"))
+                    .to_str()
+                    .unwrap(),
+            );
+        }
+        if command.has_pattern("{{build_config}}") {
+            command = command.apply("{{build_config}}", &input_paths.build_config);
+        }
+        App {
+            command,
+            responsible,
+            build,
+            tests,
+            input_is_dir,
         }
     }
 }
 
-/*
-"verifier": {
-  "id_pattern": "cutsim/_servertest/verifier/(.*).verytest.ini",
-  "groups": [
-    {
-      "find_glob": "cutsim/_servertest/verifier/smoke/**/*.verytest.ini"
-    },
-    {
-      "find_glob": "cutsim/_servertest/verifier/nightly/**/*.verytest.ini"
-    }
-  ]
-},*/
+#[derive(Debug, Deserialize, Clone)]
+pub struct BuildConfig {
+    pub exe: Option<String>,
+    pub dll: Option<String>,
+    pub cwd: Option<String>,
+    pub solution: Option<String>,
+    pub project: Option<String>,
+    #[serde(default)]
+    pub disabled: bool,
+}
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct TestPresetConfig {
+    pub id_pattern: Option<String>,
+    pub groups: Vec<TestGroup>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct TestGroup {
-    find_glob: Option<String>,
-    find_gtest: Option<String>,
+    pub find_glob: Option<String>,
+    pub find_gtest: Option<String>,
     #[serde(default = "true_value")]
     pub xge: bool,
     pub timeout: Option<f32>,
+    pub execution_style: Option<String>,
 }
+
 impl TestGroup {
+    pub fn generate_test_inputs(
+        &self,
+        app: &App,
+        preset: &TestPresetConfig,
+        input_paths: &InputPaths,
+    ) -> Vec<crate::TestId> {
+        if self.find_glob.is_some() {
+            self.generate_path_inputs(
+                &app,
+                &preset.id_pattern.as_ref().unwrap_or(&"(.*)".to_string()),
+                &input_paths,
+            )
+        } else if self.find_gtest.is_some() {
+            self.generate_gtest_inputs(&app)
+        } else {
+            panic!("no test generator defined!");
+        }
+    }
+
     fn generate_path_inputs(
         &self,
-        test_config: &AppProperties,
-        input_paths: &InputPaths,
+        test_config: &App,
         id_pattern: &str,
+        input_paths: &InputPaths,
     ) -> Vec<crate::TestId> {
         let re = regex::Regex::new(&id_pattern).unwrap();
         let abs_path = input_paths
-            .testcases_root
+            .testcases_dir
             .join(self.find_glob.clone().unwrap())
             .to_str()
             .unwrap()
@@ -183,7 +211,7 @@ impl TestGroup {
                 }
             })
             .map(|p| {
-                p.strip_prefix(&input_paths.testcases_root)
+                p.strip_prefix(&input_paths.testcases_dir)
                     .unwrap()
                     .to_str()
                     .unwrap()
@@ -209,14 +237,15 @@ impl TestGroup {
     }
     fn generate_gtest_inputs(&self, app: &App) -> Vec<crate::TestId> {
         let filter = self.find_gtest.clone().unwrap();
-        if !PathBuf::from(&app.layout.exe).exists() {
+        let exe = &app.build.exe.as_ref().expect("Exe was not specified!");
+        if !PathBuf::from(exe).exists() {
             println!(
                 "Could not find GTest executable at {}!\nDid you forget to build?",
-                app.layout.exe
+                exe
             );
             std::process::exit(-1);
         }
-        let output = std::process::Command::new(&app.layout.exe)
+        let output = std::process::Command::new(exe)
             .arg("--gtest_list_tests")
             .arg(format!("--gtest_filter={}", filter))
             .output()
@@ -244,118 +273,105 @@ impl TestGroup {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct CommandTemplate(pub Vec<String>);
+impl CommandTemplate {
+    pub fn apply(&self, from: &str, to: &str) -> CommandTemplate {
+        CommandTemplate(
+            self.0
+                .iter()
+                .map(|t| t.to_owned().replace(from, to))
+                .collect(),
+        )
+    }
+    pub fn has_pattern(&self, pattern: &str) -> bool {
+        self.0.iter().any(|t| t.contains(pattern))
+    }
+}
+
 fn true_value() -> bool {
     true
 }
 
 #[derive(Debug)]
 pub struct InputPaths {
-    pub apps: Apps,
-    pub preset_path: PathBuf,
-    pub testcases_root: PathBuf,
+    pub dev_dir: Option<PathBuf>,
+    pub build_dir: Option<PathBuf>,
+    pub testcases_dir: PathBuf,
+    pub build_type: Option<String>,
+    pub preset: String,
+    pub build_config: String,
 }
 impl InputPaths {
     pub fn get_registered_tests() -> Vec<String> {
         let path = InputPaths::mwtest_config_root().join("apps.json");
-        let file = File::open(path).unwrap();
-        let content: AppPropertiesFile = serde_json::from_reader(file).unwrap();
+        let file = File::open(path).expect("didn't find apps.json!");
+        let content: AppsConfig = serde_json::from_reader(file).unwrap();
         content.0.keys().cloned().collect()
     }
 
     pub fn from(
+        given_dev_dir: &Option<&str>,
         given_build_dir: &Option<&str>,
-        given_testcases_root: &Option<&str>,
-        given_build_layout: &Option<&str>,
+        given_testcases_dir: &Option<&str>,
+        given_build_type: &Option<&str>,
         given_preset: &Option<&str>,
+        given_build_config: &Option<&str>,
     ) -> InputPaths {
         let mut build_dir: Option<PathBuf>;
-        let mut build_layout: Option<&str>;
-        match InputPaths::guess_build_layout() {
-            BuildLayout::Dev(path) => {
+        let mut build_type: Option<&str>;
+        match InputPaths::guess_build_type() {
+            BuildType::Dev(path) => {
                 build_dir = Some(path);
-                build_layout = Some("dev-releaseunicode");
+                build_type = Some("dev-windows");
             }
-            BuildLayout::Quickstart(path) => {
+            BuildType::Quickstart(path) => {
                 build_dir = Some(path);
-                build_layout = Some("quickstart");
+                build_type = Some("quickstart");
             }
-            BuildLayout::None => {
+            BuildType::None => {
                 build_dir = None;
-                build_layout = None;
+                build_type = None;
             }
         }
         build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
-        build_layout = given_build_layout.or(build_layout);
-        if build_dir.is_none() || !build_dir.as_ref().unwrap().exists() {
-            println!("Could not determine build-dir! You may have to specify it explicitly!");
-            std::process::exit(-1);
-        }
-        if build_layout.is_none() {
-            println!("Could not determine build layout! You may have to specify it explicitly!");
-            std::process::exit(-1);
-        }
+        build_type = given_build_type.or(build_type);
 
-        let mut testcases_root: PathBuf;
-        let mut preset: &str;
+        let testcases_dir: PathBuf;
+        let preset: &str;
         match InputPaths::guess_testcases_layout() {
             TestcasesLayout::Testcases(path) => {
-                testcases_root = path;
+                testcases_dir = path;
                 preset = "ci";
             }
             TestcasesLayout::Custom(path) => {
-                testcases_root = path;
+                testcases_dir = path;
                 preset = "all";
             }
         }
-        testcases_root = given_testcases_root
+        let testcases_dir = given_testcases_dir
             .map(PathBuf::from)
-            .unwrap_or(testcases_root);
-        preset = given_preset.unwrap_or(preset);
-        if !testcases_root.exists() {
+            .unwrap_or(testcases_dir);
+        let preset = given_preset.unwrap_or(preset).to_string();
+        if !testcases_dir.exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
             std::process::exit(-1);
         }
 
-        let build_layout_path = match InputPaths::mwtest_config_path(build_layout.unwrap()) {
-            Some(path) => path,
-            None => {
-                println!("could not determine build layout! Please make sure that the path given via --build exists!");
-                std::process::exit(-1);
-            }
-        };
-        let app_config_path = InputPaths::mwtest_config_root().join("apps.json");
-        let apps = Apps::open(&app_config_path, &build_layout_path, &build_dir.unwrap())
-            .expect("Failed to load config files!");
+        let build_config = given_build_config.unwrap_or("ReleaseUnicode").to_string();
 
-        let preset_path = InputPaths::preset_from(&preset);
         InputPaths {
-            apps,
-            preset_path,
-            testcases_root,
+            dev_dir: given_dev_dir.map(|s| PathBuf::from(s)),
+            build_dir,
+            testcases_dir,
+            build_type: build_type.map(|s| s.to_string()),
+            preset,
+            build_config,
         }
     }
 
-    fn preset_from(preset: &str) -> PathBuf {
-        match InputPaths::mwtest_config_path(preset) {
-            Some(path) => path,
-            None => {
-                println!("ERROR: could not determine preset! Please make sure that the path given via --preset exists!");
-                std::process::exit(-1);
-            }
-        }
-    }
-
-    fn mwtest_config_path(name: &str) -> Option<PathBuf> {
-        let root_dir = InputPaths::mwtest_config_root();
-        let path = root_dir.join(name.to_owned() + ".json");
-        if path.exists() {
-            return Some(path);
-        }
-        let path = PathBuf::from(name);
-        if path.exists() {
-            return Some(path);
-        }
-        None
+    fn mwtest_config_path() -> PathBuf {
+        InputPaths::mwtest_config_root().join("apps.json")
     }
 
     fn mwtest_config_root() -> PathBuf {
@@ -364,21 +380,21 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
-        if root.join("config/apps.json").exists() {
-            root.join("config")
+        if root.join("apps.json").exists() {
+            root
         } else {
             // for "cargo run"
-            root.join("../../config")
+            root.join("../..")
         }
     }
 
-    fn guess_build_layout() -> BuildLayout {
+    fn guess_build_type() -> BuildType {
         if let Some(dev_root) = InputPaths::find_dev_root() {
-            BuildLayout::Dev(dev_root.join("dev"))
+            BuildType::Dev(dev_root.join("dev"))
         } else if InputPaths::is_quickstart() {
-            BuildLayout::Quickstart(std::env::current_dir().unwrap())
+            BuildType::Quickstart(std::env::current_dir().unwrap())
         } else {
-            BuildLayout::None
+            BuildType::None
         }
     }
 
@@ -417,7 +433,7 @@ impl InputPaths {
     }
 }
 
-enum BuildLayout {
+enum BuildType {
     Dev(PathBuf),
     Quickstart(PathBuf),
     None,
@@ -426,32 +442,4 @@ enum BuildLayout {
 enum TestcasesLayout {
     Testcases(PathBuf),
     Custom(PathBuf),
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct CommandTemplate(pub Vec<String>);
-impl CommandTemplate {
-    pub fn apply(&self, from: &str, to: &str) -> CommandTemplate {
-        CommandTemplate(
-            self.0
-                .iter()
-                .map(|t| t.to_owned().replace(from, to))
-                .collect(),
-        )
-    }
-    /*pub fn apply_all(&self, patterns: &HashMap<String, String>) -> CommandTemplate {
-        CommandTemplate(
-            self.0
-                .iter()
-                .map(|t: &String| {
-                    patterns
-                        .iter()
-                        .fold(t.to_owned(), |acc, (k, v)| acc.replace(k, v))
-                })
-                .collect(),
-        )
-    }*/
-    pub fn has_pattern(&self, pattern: &str) -> bool {
-        self.0.iter().any(|t| t.contains(pattern))
-    }
 }

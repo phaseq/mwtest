@@ -17,6 +17,10 @@ fn main() {
         .required(true)
         .multiple(true)
         .possible_values(&registered_tests_str[..]);
+    let test_app_arg_optional = Arg::with_name("test_app")
+        .required(false)
+        .multiple(true)
+        .possible_values(&registered_tests_str[..]);
     let filter_arg = Arg::with_name("filter")
         .short("f")
         .long("filter")
@@ -25,32 +29,40 @@ fn main() {
         .multiple(true);
     let matches = App::new("MW Test")
         .setting(AppSettings::SubcommandRequired)
-        .arg(Arg::with_name("BUILD_ROOT")
+        .arg(Arg::with_name("DEV_DIR")
+            .long("dev-dir")
+            .takes_value(true)
+            .help("path to a dev folder"))
+        .arg(Arg::with_name("BUILD_DIR")
             .long("build-dir")
             .takes_value(true)
-            .help("depends on build type, could be \"your-branch/dev\", a quickstart or a CMake build directory"))
-        .arg(Arg::with_name("TESTCASES_ROOT")
+            .help("depends on build type, could be a dev folder, a quickstart or a CMake build directory"))
+        .arg(Arg::with_name("TESTCASES_DIR")
             .long("testcases-dir")
             .takes_value(true)
             .help("usually \"your-branch/testcases\""))
         .arg(Arg::with_name("OUT_DIR")
             .long("output-dir")
             .takes_value(true))
-        .arg(Arg::with_name("BUILD_LAYOUT")
+        .arg(Arg::with_name("BUILD_TYPE")
             .short("b")
             .long("--build")
             .takes_value(true)
-            .help("specifies the layout of your build (like dev-releaseunicode, quickstart or cmake)"))
+            .help("specifies the type of your build (like dev-releaseunicode, quickstart or cmake)"))
         .arg(Arg::with_name("PRESET")
             .long("--preset")
             .takes_value(true)
             .help("specifies which tests to run (like ci, nightly)"))
+        .arg(Arg::with_name("BUILD_CONFIG")
+            .long("--config")
+            .takes_value(true)
+            .help("specify build type (ReleaseUnicode, RelWithDebInfo, ...)"))
         .subcommand(
             SubCommand::with_name("build")
                 .arg(test_app_arg.clone()),
         ).subcommand(
             SubCommand::with_name("list")
-                .arg(test_app_arg.clone())
+                .arg(test_app_arg_optional.clone())
                 .arg(filter_arg.clone()),
         ).subcommand(
             SubCommand::with_name("run")
@@ -83,39 +95,35 @@ fn main() {
         ).get_matches();
 
     let input_paths = config::InputPaths::from(
-        &matches.value_of("BUILD_ROOT"),
-        &matches.value_of("TESTCASES_ROOT"),
-        &matches.value_of("BUILD_LAYOUT"),
+        &matches.value_of("DEV_DIR"),
+        &matches.value_of("BUILD_DIR"),
+        &matches.value_of("TESTCASES_DIR"),
+        &matches.value_of("BUILD_TYPE"),
         &matches.value_of("PRESET"),
+        &matches.value_of("BUILD_CONFIG"),
     );
 
+    let apps_config = config::AppsConfig::load().expect("Failed to load apps.json!");
+
     if let Some(matches) = matches.subcommand_matches("build") {
-        cmd_build(
-            &matches
-                .values_of("test_app")
-                .unwrap()
-                .collect::<Vec<&str>>(),
-            &input_paths,
-        );
+        let app_names = matches.values_of("test_app").unwrap().collect();
+        let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
+        cmd_build(&app_names, &apps);
         std::process::exit(0);
     }
 
-    let test_group_file = match config::TestGroupFile::open(&input_paths.preset_path) {
-        Ok(file) => file,
-        Err(e) => {
-            println!(
-                "ERROR: failed to parse preset file at {:?}: {}",
-                &input_paths.preset_path, e
-            );
-            std::process::exit(-1);
-        }
-    };
-
     if let Some(matches) = matches.subcommand_matches("list") {
-        let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
-        cmd_list(&test_apps);
+        if let Some(apps) = matches.values_of("test_app") {
+            let apps = apps_config.select_build_and_preset(&apps.collect(), &input_paths);
+            let app_tests = generate_app_tests(&matches, &input_paths, &apps);
+            cmd_list_tests(&app_tests);
+        } else {
+            cmd_list_apps(&apps_config);
+        }
     } else if let Some(matches) = matches.subcommand_matches("run") {
-        let test_apps = test_apps_from_args(&matches, &input_paths, &test_group_file);
+        let app_names = matches.values_of("test_app").unwrap().collect();
+        let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
+        let app_tests = generate_app_tests(&matches, &input_paths, &apps);
         let out_dir = matches
             .value_of("OUT_DIR")
             .map(PathBuf::from)
@@ -145,18 +153,18 @@ fn main() {
             xge: matches.is_present("xge"),
             repeat: repeat_strategy,
         };
-        let success = cmd_run(&input_paths, &test_apps, &output_paths, &run_config);
+        let success = cmd_run(&input_paths, &app_tests, &output_paths, &run_config);
         if !success {
             std::process::exit(-1)
         }
     }
 }
 
-fn cmd_build(test_names: &[&str], input_paths: &config::InputPaths) {
+fn cmd_build(test_names: &[&str], apps: &config::Apps) {
     let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
     for (name, dep) in test_names
         .iter()
-        .map(|n| (n, &input_paths.apps.get(*n).unwrap().layout))
+        .map(|n| (n, &apps.0.get(*n).unwrap().build))
     {
         if dep.solution.is_none() || dep.project.is_none() {
             println!("ERROR: no solution/project defined for {}", name);
@@ -184,11 +192,17 @@ fn cmd_build(test_names: &[&str], input_paths: &config::InputPaths) {
     }
 }
 
-fn cmd_list(test_apps: &[AppWithTests]) {
-    for test_app in test_apps {
-        for group in &test_app.tests {
+fn cmd_list_apps(apps: &config::AppsConfig) {
+    for name in apps.app_names() {
+        println!("  {}", name);
+    }
+}
+
+fn cmd_list_tests(apps: &[AppWithTests]) {
+    for app in apps {
+        for group in &app.tests {
             for test_id in &group.test_ids {
-                println!("{} --id {}", test_app.name, test_id.id);
+                println!("{} --id {}", app.name, test_id.id);
             }
         }
     }
@@ -255,10 +269,10 @@ pub struct OutputPaths {
     tmp_dir: PathBuf,
 }
 
-fn test_apps_from_args(
+fn generate_app_tests(
     args: &clap::ArgMatches<'_>,
     input_paths: &config::InputPaths,
-    test_group_file: &config::TestGroupFile,
+    apps_config: &config::Apps,
 ) -> Vec<AppWithTests> {
     let id_filter = id_filter_from_args(args);
     let apps: Vec<AppWithTests> = args
@@ -266,10 +280,10 @@ fn test_apps_from_args(
         .unwrap()
         .map(|app_name| {
             // get app for string from command line
-            let app = match input_paths.apps.get(app_name) {
+            let app = match apps_config.0.get(app_name) {
                 Some(app) => app,
                 None => {
-                    let app_names = input_paths.apps.app_names();
+                    let app_names = apps_config.app_names();
                     println!(
                         "ERROR: \"{}\" not found: must be one of {:?}",
                         app_name, app_names
@@ -279,12 +293,24 @@ fn test_apps_from_args(
             };
 
             // populate with tests
-            let tests = test_group_file
-                .get(app_name)
-                .map(|test_groups| {
-                    populate_test_groups(&app, input_paths, test_groups, &*id_filter)
+            let tests: Vec<GroupWithTests> = app
+                .tests
+                .iter()
+                .flat_map(|preset_config| {
+                    preset_config
+                        .groups
+                        .iter()
+                        .map(|test_group| GroupWithTests {
+                            test_group: test_group.clone(),
+                            test_ids: test_group
+                                .generate_test_inputs(&app, &preset_config, &input_paths)
+                                .into_iter()
+                                .filter(|f| id_filter(&f.id))
+                                .collect(),
+                        })
+                        .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|| vec![]);
+                .collect();
             AppWithTests {
                 name: app_name.to_string(),
                 app: (*app).clone(),
@@ -317,24 +343,4 @@ fn id_filter_from_args(args: &clap::ArgMatches<'_>) -> Box<dyn Fn(&str) -> bool>
             true
         }
     })
-}
-
-fn populate_test_groups(
-    app: &config::App,
-    input_paths: &config::InputPaths,
-    test_groups: &config::TestGroups,
-    id_filter: &dyn Fn(&str) -> bool,
-) -> Vec<GroupWithTests> {
-    test_groups
-        .groups
-        .iter()
-        .map(|test_group| GroupWithTests {
-            test_group: test_group.clone(),
-            test_ids: test_groups
-                .generate_test_inputs(&test_group, &app, &input_paths)
-                .into_iter()
-                .filter(|f| id_filter(&f.id))
-                .collect(),
-        })
-        .collect()
 }

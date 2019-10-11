@@ -3,6 +3,7 @@ name = "mwtest"
 version = "0.1.0"
 authors = ["Fabian Beckmann <fb@phaseq.de>"]
 edition = "2018"
+default-run = "mwtest"
 
 [dependencies]
 clap = ">= 2.32.0"
