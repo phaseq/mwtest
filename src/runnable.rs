@@ -11,6 +11,14 @@ pub fn create_run_commands<'a>(
     let mut tests: Vec<TestInstanceCreator> = Vec::new();
     for app in test_apps {
         for group in &app.tests {
+            let execution_style = match group.test_group.execution_style.as_ref() {
+                "singlethreaded" => ExecutionStyle::Single,
+                "parallel" => ExecutionStyle::Parallel,
+                "xge" => ExecutionStyle::XGE,
+                _ => panic!(
+                    "Invalid execution style! Only 'singlethreaded', 'parallel', 'xge' allowed."
+                ),
+            };
             for test_id in &group.test_ids {
                 let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
                 let generator = test_command_generator(
@@ -22,7 +30,7 @@ pub fn create_run_commands<'a>(
                 tests.push(TestInstanceCreator {
                     app_name: app.name.clone(),
                     test_id: test_id.clone(),
-                    allow_xge: group.test_group.xge,
+                    execution_style: execution_style.clone(),
                     timeout: group.test_group.timeout,
                     command_generator: generator,
                 });
@@ -35,7 +43,7 @@ pub fn create_run_commands<'a>(
 pub struct TestInstanceCreator {
     pub app_name: String,
     pub test_id: TestId,
-    pub allow_xge: bool,
+    pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,
     pub command_generator: Box<CommandGenerator>,
 }
@@ -45,18 +53,33 @@ impl TestInstanceCreator {
         TestInstance {
             app_name: self.app_name.clone(),
             test_id: self.test_id.clone(),
-            allow_xge: self.allow_xge,
+            execution_style: self.execution_style.clone(),
             timeout: self.timeout,
             command: (self.command_generator)(),
         }
     }
+
+    pub fn can_use_xge(&self) -> bool {
+        match self.execution_style {
+            ExecutionStyle::XGE => true,
+            ExecutionStyle::Parallel => false,
+            ExecutionStyle::Single => panic!("Not implemented :("),
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+pub enum ExecutionStyle {
+    Single,
+    Parallel,
+    XGE,
+}
+
+#[derive(Clone)]
 pub struct TestInstance {
     pub app_name: String,
     pub test_id: TestId,
-    pub allow_xge: bool,
+    pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,
     pub command: TestCommand,
 }

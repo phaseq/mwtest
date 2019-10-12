@@ -23,10 +23,13 @@ impl AppsConfig {
         app_names: &Vec<&str>,
         input_paths: &InputPaths,
     ) -> Apps {
-        let build_type = input_paths
-            .build_type
-            .as_ref()
-            .expect("Please specify --build-type :)");
+        let build_type: &str = match &input_paths.build_type {
+            Some(b) => b,
+            None => {
+                println!("Please specify --build-type :)");
+                std::process::exit(-1);
+            }
+        };
         let presets = [input_paths.preset.to_string()];
         Apps(
             self.0
@@ -34,8 +37,13 @@ impl AppsConfig {
                 .filter(|(name, _config)| app_names.iter().any(|n| n == name || *n == "all"))
                 .map(|(name, config)| {
                     let build_config = config.builds.get(build_type).unwrap_or_else(|| {
-                        panic!("build '{}' not found in '{}'", build_type, name)
+                        println!("build '{}' not found in '{}'", build_type, name);
+                        std::process::exit(-1);
                     });
+                    (name, config, build_config)
+                })
+                .filter(|(_name, _config, build_config)| !build_config.disabled)
+                .map(|(name, config, build_config)| {
                     let build = Build::from(&build_config, &input_paths);
                     let tests = presets
                         .iter()
@@ -49,7 +57,7 @@ impl AppsConfig {
                             config.responsible.clone(),
                             build,
                             tests,
-                            config.input_is_dir,
+                            config.globber_matches_parent,
                         ),
                     )
                 })
@@ -61,11 +69,17 @@ impl AppsConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub command: CommandTemplate,
-    pub responsible: String,
+    pub responsible: String,            // TODO
+    pub alias: Vec<String>,             // TODO
+    pub tags: Vec<String>,              // TODO
+    pub accepted_returncodes: Vec<u32>, // TODO
+    pub disabled: bool,                 // TODO
     pub builds: HashMap<String, BuildConfig>,
     pub tests: HashMap<String, TestPresetConfig>,
     #[serde(default)]
-    pub input_is_dir: bool,
+    pub globber_matches_parent: bool,
+    #[serde(default)]
+    pub checkout_parent: bool, // TODO
 }
 
 #[derive(Debug)]
@@ -84,7 +98,7 @@ pub struct App {
     pub responsible: String,
     pub build: Build,
     pub tests: Vec<TestPresetConfig>,
-    pub input_is_dir: bool,
+    pub globber_matches_parent: bool,
 }
 impl App {
     fn from(
@@ -92,7 +106,7 @@ impl App {
         responsible: String,
         build: Build,
         tests: Vec<TestPresetConfig>,
-        input_is_dir: bool,
+        globber_matches_parent: bool,
     ) -> Self {
         let patterns = [
             ("{{exe}}", Some(&build.exe)),
@@ -102,7 +116,10 @@ impl App {
             if command.has_pattern(p) {
                 match r {
                     Some(r) => command = command.apply(p, r),
-                    None => panic!("Please specify {}", p),
+                    None => {
+                        println!("Please specify {}", p);
+                        std::process::exit(-1);
+                    }
                 }
             }
         }
@@ -111,7 +128,7 @@ impl App {
             responsible,
             build,
             tests,
-            input_is_dir,
+            globber_matches_parent,
         }
     }
 }
@@ -163,26 +180,24 @@ impl Build {
             Some(s) => {
                 let mut s = s.clone();
                 if s.contains("{{dev_dir}}") {
-                    s = s.replace(
-                        "{{dev_dir}}",
-                        input_paths
-                            .dev_dir
-                            .as_ref()
-                            .expect("{{dev_dir}} not specified")
-                            .to_str()
-                            .unwrap(),
-                    );
+                    let dev_dir = match input_paths.dev_dir.as_ref() {
+                        Some(d) => d.to_str().unwrap(),
+                        None => {
+                            println!("Please specify --dev-dir :)");
+                            std::process::exit(-1);
+                        }
+                    };
+                    s = s.replace("{{dev_dir}}", dev_dir);
                 }
                 if s.contains("{{build_dir}}") {
-                    s = s.replace(
-                        "{{build_dir}}",
-                        input_paths
-                            .build_dir
-                            .as_ref()
-                            .expect("{{build_dir}} not specified")
-                            .to_str()
-                            .unwrap(),
-                    );
+                    let build_dir = match input_paths.build_dir.as_ref() {
+                        Some(d) => d.to_str().unwrap(),
+                        None => {
+                            println!("Please specify --build-dir :)");
+                            std::process::exit(-1);
+                        }
+                    };
+                    s = s.replace("{{build_dir}}", build_dir);
                 }
                 if s.contains("{{testcases_dir}}") {
                     s = s.replace(
@@ -208,10 +223,13 @@ pub struct TestPresetConfig {
 pub struct TestGroup {
     pub find_glob: Option<String>,
     pub find_gtest: Option<String>,
-    #[serde(default = "true_value")]
-    pub xge: bool,
     pub timeout: Option<f32>,
-    pub execution_style: Option<String>,
+    #[serde(default = "value_xge")]
+    pub execution_style: String,
+}
+
+fn value_xge() -> String {
+    "xge".to_string()
 }
 
 impl TestGroup {
@@ -222,11 +240,11 @@ impl TestGroup {
         input_paths: &InputPaths,
     ) -> Vec<crate::TestId> {
         if self.find_glob.is_some() {
-            self.generate_path_inputs(
-                &app,
-                &preset.id_pattern.as_ref().unwrap_or(&"(.*)".to_string()),
-                &input_paths,
-            )
+            let id_pattern = match &preset.id_pattern {
+                Some(p) => &p,
+                None => "(.*)",
+            };
+            self.generate_path_inputs(&app, id_pattern, &input_paths)
         } else if self.find_gtest.is_some() {
             self.generate_gtest_inputs(&app)
         } else {
@@ -251,7 +269,7 @@ impl TestGroup {
             .expect("failed to read glob pattern!")
             .map(Result::unwrap)
             .map(|p| {
-                if test_config.input_is_dir {
+                if test_config.globber_matches_parent {
                     PathBuf::from(p.parent().unwrap())
                 } else {
                     p
@@ -334,10 +352,6 @@ impl CommandTemplate {
     pub fn has_pattern(&self, pattern: &str) -> bool {
         self.0.iter().any(|t| t.contains(pattern))
     }
-}
-
-fn true_value() -> bool {
-    true
 }
 
 #[derive(Debug)]

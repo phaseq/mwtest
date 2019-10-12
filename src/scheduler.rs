@@ -1,7 +1,7 @@
 use crate::config;
 use crate::report;
 #[cfg(test)]
-use crate::runnable::TestCommand;
+use crate::runnable::{ExecutionStyle, TestCommand};
 use crate::runnable::{TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
 use futures::future::{self, Either};
@@ -201,16 +201,16 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
             // repeat each test exactly `repeat` times
             let instances: Vec<_> = tests
                 .into_iter()
-                .flat_map(|tic| (0..repeat).map(move |_| (tic.allow_xge, tic.instantiate())))
+                .flat_map(|tic| (0..repeat).map(move |_| (!tic.can_use_xge(), tic.instantiate())))
                 .collect();
             let sender = async {
-                for (i, (allow_xge, instance)) in instances.iter().enumerate() {
+                for (i, (local, instance)) in instances.iter().enumerate() {
                     let request = xge_lib::StreamRequest {
                         id: i as u64,
                         title: instance.test_id.id.clone(),
                         cwd: instance.command.cwd.clone(),
                         command: instance.command.command.clone(),
-                        local: !allow_xge,
+                        local: *local,
                     };
                     let message = serde_json::to_string(&request).unwrap();
                     writer.send(message).await.unwrap();
@@ -334,7 +334,7 @@ impl TestQueue {
                     title: instance.test_id.id.clone(),
                     cwd: instance.command.cwd.clone(),
                     command: instance.command.command.clone(),
-                    local: !tic.allow_xge,
+                    local: !tic.can_use_xge(),
                 })
             }
             None => None,
@@ -435,7 +435,7 @@ mod tests {
                 id: "test_id".to_owned(),
                 rel_path: None,
             },
-            allow_xge: false,
+            execution_style: ExecutionStyle::Parallel,
             timeout: None,
             command_generator,
         };
@@ -454,7 +454,7 @@ mod tests {
                 id: "test_id".to_owned(),
                 rel_path: None,
             },
-            allow_xge: false,
+            execution_style: ExecutionStyle::Parallel,
             timeout: None,
             command_generator,
         };
@@ -627,7 +627,7 @@ mod tests {
                 id: format!("{:?}", timeout),
                 rel_path: None,
             },
-            allow_xge: false,
+            execution_style: ExecutionStyle::Parallel,
             timeout,
             command_generator,
         }
