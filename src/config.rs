@@ -33,11 +33,10 @@ impl AppsConfig {
                 .iter()
                 .filter(|(name, _config)| app_names.iter().any(|n| n == name || *n == "all"))
                 .map(|(name, config)| {
-                    let build_config = config
-                        .builds
-                        .get(build_type)
-                        .unwrap_or_else(|| panic!("build '{}' not found in '{}'", build_type, name))
-                        .clone();
+                    let build_config = config.builds.get(build_type).unwrap_or_else(|| {
+                        panic!("build '{}' not found in '{}'", build_type, name)
+                    });
+                    let build = Build::from(&build_config, &input_paths);
                     let tests = presets
                         .iter()
                         .filter_map(|p| config.tests.get(p))
@@ -46,10 +45,9 @@ impl AppsConfig {
                     (
                         name.to_string(),
                         App::from(
-                            &input_paths,
                             config.command.clone(),
                             config.responsible.clone(),
-                            build_config.clone(),
+                            build,
                             tests,
                             config.input_is_dir,
                         ),
@@ -84,51 +82,29 @@ impl Apps {
 pub struct App {
     pub command: CommandTemplate,
     pub responsible: String,
-    pub build: BuildConfig,
+    pub build: Build,
     pub tests: Vec<TestPresetConfig>,
     pub input_is_dir: bool,
 }
 impl App {
     fn from(
-        input_paths: &InputPaths,
         mut command: CommandTemplate,
         responsible: String,
-        build: BuildConfig,
+        build: Build,
         tests: Vec<TestPresetConfig>,
         input_is_dir: bool,
     ) -> Self {
-        if command.has_pattern("{{exe}}") {
-            let exe = build.exe.as_ref().unwrap();
-            command = command.apply("{{exe}}", &exe);
-        }
-        if command.has_pattern("{{dll}}") {
-            let dll = build.dll.as_ref().unwrap();
-            command = command.apply("{{dll}}", &dll);
-        }
-        if command.has_pattern("{{dev_dir}}") {
-            command = command.apply(
-                "{{dev_dir}}",
-                input_paths
-                    .dev_dir
-                    .as_ref()
-                    .unwrap_or_else(|| panic!("Please specify --dev-dir :)"))
-                    .to_str()
-                    .unwrap(),
-            );
-        }
-        if command.has_pattern("{{build_dir}}") {
-            command = command.apply(
-                "{{build_dir}}",
-                input_paths
-                    .dev_dir
-                    .as_ref()
-                    .unwrap_or_else(|| panic!("Please specify --build-dir :)"))
-                    .to_str()
-                    .unwrap(),
-            );
-        }
-        if command.has_pattern("{{build_config}}") {
-            command = command.apply("{{build_config}}", &input_paths.build_config);
+        let patterns = [
+            ("{{exe}}", Some(&build.exe)),
+            ("{{dll}}", build.dll.as_ref()),
+        ];
+        for (p, r) in patterns.iter() {
+            if command.has_pattern(p) {
+                match r {
+                    Some(r) => command = command.apply(p, r),
+                    None => panic!("Please specify {}", p),
+                }
+            }
         }
         App {
             command,
@@ -149,6 +125,77 @@ pub struct BuildConfig {
     pub project: Option<String>,
     #[serde(default)]
     pub disabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Build {
+    pub exe: String,
+    pub dll: Option<String>,
+    pub cwd: Option<String>,
+    pub solution: Option<String>,
+    pub project: Option<String>,
+}
+impl Build {
+    fn from(build: &BuildConfig, input_paths: &InputPaths) -> Build {
+        let exe = Build::apply_config_string(&build.exe, &input_paths).unwrap();
+        if !PathBuf::from(&exe).exists() {
+            panic!("exe not found: {:?}", exe);
+        }
+        let dll = Build::apply_config_string(&build.dll, &input_paths);
+        if let Some(dll) = &dll {
+            if !PathBuf::from(&dll).exists() {
+                panic!("dll not found: {:?}", dll);
+            }
+        }
+        let cwd = Build::apply_config_string(&build.cwd, &input_paths);
+        let solution = Build::apply_config_string(&build.solution, &input_paths);
+        Build {
+            exe,
+            dll,
+            cwd,
+            solution,
+            project: build.project.clone(),
+        }
+    }
+
+    fn apply_config_string(string: &Option<String>, input_paths: &InputPaths) -> Option<String> {
+        match &string {
+            Some(s) => {
+                let mut s = s.clone();
+                if s.contains("{{dev_dir}}") {
+                    s = s.replace(
+                        "{{dev_dir}}",
+                        input_paths
+                            .dev_dir
+                            .as_ref()
+                            .expect("{{dev_dir}} not specified")
+                            .to_str()
+                            .unwrap(),
+                    );
+                }
+                if s.contains("{{build_dir}}") {
+                    s = s.replace(
+                        "{{build_dir}}",
+                        input_paths
+                            .build_dir
+                            .as_ref()
+                            .expect("{{build_dir}} not specified")
+                            .to_str()
+                            .unwrap(),
+                    );
+                }
+                if s.contains("{{testcases_dir}}") {
+                    s = s.replace(
+                        "{{testcases_dir}}",
+                        input_paths.testcases_dir.to_str().unwrap(),
+                    );
+                }
+                s = s.replace("{{build_config}}", &input_paths.build_config);
+                Some(s)
+            }
+            None => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -237,7 +284,7 @@ impl TestGroup {
     }
     fn generate_gtest_inputs(&self, app: &App) -> Vec<crate::TestId> {
         let filter = self.find_gtest.clone().unwrap();
-        let exe = &app.build.exe.as_ref().expect("Exe was not specified!");
+        let exe = &app.build.exe;
         if !PathBuf::from(exe).exists() {
             println!(
                 "Could not find GTest executable at {}!\nDid you forget to build?",
