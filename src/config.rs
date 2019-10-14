@@ -69,11 +69,12 @@ impl AppsConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub command: CommandTemplate,
-    pub responsible: String,            // TODO
-    pub alias: Vec<String>,             // TODO
-    pub tags: Vec<String>,              // TODO
-    pub accepted_returncodes: Vec<u32>, // TODO
-    pub disabled: bool,                 // TODO
+    pub responsible: String,                    // TODO
+    pub alias: Option<Vec<String>>,             // TODO
+    pub tags: Option<Vec<String>>,              // TODO
+    pub accepted_returncodes: Option<Vec<u32>>, // TODO
+    #[serde(default)]
+    pub disabled: bool,   // TODO
     pub builds: HashMap<String, BuildConfig>,
     pub tests: HashMap<String, TestPresetConfig>,
     #[serde(default)]
@@ -379,22 +380,27 @@ impl InputPaths {
         given_preset: &Option<&str>,
         given_build_config: &Option<&str>,
     ) -> InputPaths {
+        let mut dev_dir: Option<PathBuf>;
         let mut build_dir: Option<PathBuf>;
         let mut build_type: Option<&str>;
         match InputPaths::guess_build_type() {
             BuildType::Dev(path) => {
+                dev_dir = Some(path.clone());
                 build_dir = Some(path);
                 build_type = Some("dev-windows");
             }
             BuildType::Quickstart(path) => {
+                dev_dir = None;
                 build_dir = Some(path);
                 build_type = Some("quickstart");
             }
             BuildType::None => {
+                dev_dir = None;
                 build_dir = None;
                 build_type = None;
             }
         }
+        dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
         build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
         build_type = given_build_type.or(build_type);
 
@@ -422,7 +428,7 @@ impl InputPaths {
         let build_config = given_build_config.unwrap_or("ReleaseUnicode").to_string();
 
         InputPaths {
-            dev_dir: given_dev_dir.map(|s| PathBuf::from(s)),
+            dev_dir,
             build_dir,
             testcases_dir,
             build_type: build_type.map(|s| s.to_string()),

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<Profile FormatVersion="1">
+    <Tools>
+        <Tool Filename="xge.exe" AllowIntercept="true" AllowRestartOnLocal="true" AutoRecover="mwMSimDefGUI.dll could not be loaded,Cannot get file record: Null position" />
+    </Tools>
+</Profile>

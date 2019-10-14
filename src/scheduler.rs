@@ -105,7 +105,7 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                 .fold(
                     (true, callback, 0, repeat),
                     |(mut success, mut callback, i, repeat), (test_instance, result)| {
-                        callback(i + 1, repeat, test_instance, &result);
+                        callback(i + 1, n, test_instance, &result);
                         success &= result.exit_code == 0;
                         future::ready((success, callback, i + 1, repeat))
                     },
@@ -363,7 +363,6 @@ impl TestQueue {
 
 impl TestInstance {
     async fn run_async(&self) -> TestCommandResult {
-        println!("{:?}", self.command.command);
         let output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
