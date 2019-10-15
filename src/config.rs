@@ -53,6 +53,7 @@ impl AppsConfig {
                     (
                         name.to_string(),
                         App::from(
+                            input_paths,
                             config.command.clone(),
                             config.responsible.clone(),
                             build,
@@ -103,6 +104,7 @@ pub struct App {
 }
 impl App {
     fn from(
+        input_paths: &InputPaths,
         mut command: CommandTemplate,
         responsible: String,
         build: Build,
@@ -124,6 +126,7 @@ impl App {
                 }
             }
         }
+        command = command.apply_input_paths(input_paths);
         App {
             command,
             responsible,
@@ -178,37 +181,7 @@ impl Build {
 
     fn apply_config_string(string: &Option<String>, input_paths: &InputPaths) -> Option<String> {
         match &string {
-            Some(s) => {
-                let mut s = s.clone();
-                if s.contains("{{dev_dir}}") {
-                    let dev_dir = match input_paths.dev_dir.as_ref() {
-                        Some(d) => d.to_str().unwrap(),
-                        None => {
-                            println!("Please specify --dev-dir :)");
-                            std::process::exit(-1);
-                        }
-                    };
-                    s = s.replace("{{dev_dir}}", dev_dir);
-                }
-                if s.contains("{{build_dir}}") {
-                    let build_dir = match input_paths.build_dir.as_ref() {
-                        Some(d) => d.to_str().unwrap(),
-                        None => {
-                            println!("Please specify --build-dir :)");
-                            std::process::exit(-1);
-                        }
-                    };
-                    s = s.replace("{{build_dir}}", build_dir);
-                }
-                if s.contains("{{testcases_dir}}") {
-                    s = s.replace(
-                        "{{testcases_dir}}",
-                        input_paths.testcases_dir.to_str().unwrap(),
-                    );
-                }
-                s = s.replace("{{build_config}}", &input_paths.build_config);
-                Some(s)
-            }
+            Some(s) => Some(input_paths.apply_to(s)),
             None => None,
         }
     }
@@ -311,11 +284,20 @@ impl TestGroup {
             );
             std::process::exit(-1);
         }
+        let args = app.command.clone().apply("{{input}}", &filter);
+        let args = &args.0[1..];
+        let cwd_default = ".".to_string();
+        let cwd = app.build.cwd.as_ref().unwrap_or(&cwd_default);
         let output = std::process::Command::new(exe)
             .arg("--gtest_list_tests")
-            .arg(format!("--gtest_filter={}", filter))
+            .args(args)
+            .current_dir(cwd)
             .output()
             .expect("failed to gather tests!");
+        if !output.status.success() {
+            println!("Failed to execute {} {:?}: {:?}", exe, args, output);
+            std::process::exit(-1);
+        }
         let output: &str = std::str::from_utf8(&output.stdout)
             .expect("could not decode find_gtest output as utf-8!");
         let mut group = String::new();
@@ -350,6 +332,9 @@ impl CommandTemplate {
                 .collect(),
         )
     }
+    pub fn apply_input_paths(&self, input_paths: &InputPaths) -> CommandTemplate {
+        CommandTemplate(self.0.iter().map(|t| input_paths.apply_to(t)).collect())
+    }
     pub fn has_pattern(&self, pattern: &str) -> bool {
         self.0.iter().any(|t| t.contains(pattern))
     }
@@ -370,6 +355,39 @@ impl InputPaths {
         let file = File::open(path).expect("didn't find apps.json!");
         let content: AppsConfig = serde_json::from_reader(file).unwrap();
         content.0.keys().cloned().collect()
+    }
+
+    fn apply_to(&self, string: &str) -> String {
+        let mut s = string.to_string();
+        if s.contains("{{dev_dir}}") {
+            let dev_dir = match self.dev_dir.as_ref() {
+                Some(d) => d.to_str().unwrap(),
+                None => {
+                    println!("Please specify --dev-dir :)");
+                    std::process::exit(-1);
+                }
+            };
+            s = s.replace("{{dev_dir}}", dev_dir);
+        }
+        if s.contains("{{build_dir}}") {
+            let build_dir = match self.build_dir.as_ref() {
+                Some(d) => d.to_str().unwrap(),
+                None => {
+                    println!("Please specify --build-dir :)");
+                    std::process::exit(-1);
+                }
+            };
+            s = s.replace("{{build_dir}}", build_dir);
+        }
+        if s.contains("{{testcases_dir}}") {
+            s = s.replace("{{testcases_dir}}", self.testcases_dir.to_str().unwrap());
+        }
+        s = s.replace("{{build_config}}", &self.build_config);
+        s = s.replace(
+            "{{build_config_skipunicode}}",
+            &self.build_config.replace("Unicode", ""),
+        );
+        s
     }
 
     pub fn from(

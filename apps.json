@@ -790,8 +790,7 @@
   "mwCNCSimUnitTest": {
     "command": [
       "{{exe}}",
-      "--gtest_filter",
-      "{{input}}",
+      "--gtest_filter={{input}}",
       "--test-data",
       "{{dev_dir}}/CNCSim/mwCNCSimUnitTest/TestData",
       "--machines-data",
@@ -912,8 +911,7 @@
   "mwNGSPTest": {
     "command": [
       "{{exe}}",
-      "--gtest_filter",
-      "{{input}}",
+      "--gtest_filter={{input}}",
       "--regression_tests_folder",
       "{{testcases_dir}}/ShopFloorProgramming/mwNGSPTest/RegressionTestJobs",
       "--runtime_data_folder",
@@ -1039,8 +1037,7 @@
   "openMeshUtils": {
     "command": [
       "{{exe}}",
-      "--gtest_filter",
-      "{{input}}"
+      "--gtest_filter={{input}}"
     ],
     "responsible": "5Axis Team",
     "builds": {
@@ -1076,8 +1073,7 @@
   "rotary": {
     "command": [
       "{{exe}}",
-      "--gtest_filter",
-      "{{input}}"
+      "--gtest_filter={{input}}"
     ],
     "responsible": "5Axis Team",
     "disabled": true,
@@ -1289,8 +1285,7 @@
     "command": [
       "{{exe}}",
       "--notimeout",
-      "--gtest_filter",
-      "{{input}}"
+      "--gtest_filter={{input}}"
     ],
     "responsible": "CutSim Team",
     "tags": [
@@ -1348,8 +1343,7 @@
     "command": [
       "{{exe}}",
       "--notimeout",
-      "--gtest_filter",
-      "{{input}}"
+      "--gtest_filter={{input}}"
     ],
     "responsible": "CutSim Team",
     "tags": [
