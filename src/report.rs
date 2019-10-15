@@ -80,19 +80,18 @@ impl XmlReport {
 
     fn write(&mut self) -> std::io::Result<()> {
         let mut out = BufWriter::new(&self.file);
-        out.write_all(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><mwtest>")?;
+        out.write_all(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites>\n")?;
         out.write_all(
             format!(
-                "<config><reference_root>{}</reference_root></config>",
+                "<mw_paths testcases_root=\"{}\" />\n",
                 self.testcases_root.to_string_lossy().into_owned()
             )
             .as_bytes(),
         )?;
-        out.write_all(b"<testsuites>")?;
         for (test_name, test_results) in &self.results {
             out.write_all(
                 format!(
-                    "<testsuite name=\"{}\" test=\"{}\">",
+                    "<testsuite name=\"{}\" test=\"{}\">\n",
                     test_name,
                     test_results.len()
                 )
@@ -101,9 +100,9 @@ impl XmlReport {
             for (test_instance, command_result) in test_results.iter() {
                 self.write_testcase(&mut out, &test_instance, &command_result)?;
             }
-            out.write_all(b"</testsuite>")?;
+            out.write_all(b"</testsuite>\n")?;
         }
-        out.write_all(b"</testsuites></mwtest>")?;
+        out.write_all(b"</testsuites>\n")?;
         Ok(())
     }
 
@@ -115,62 +114,77 @@ impl XmlReport {
     ) -> std::io::Result<()> {
         out.write_all(
             format!(
-                "<testcase name=\"{}\">",
+                "<testcase name=\"{}\">\n",
                 htmlescape::encode_attribute(&test_instance.test_id.id)
             )
             .as_bytes(),
         )?;
-        out.write_all(format!("<exit_code>{}</exit_code>", command_result.exit_code).as_bytes())?;
+        out.write_all(format!("<exit-code>{}</exit-code>\n", command_result.exit_code).as_bytes())?;
         if command_result.exit_code != 0 {
             out.write_all(b"<failure />")?;
         }
         out.write_all(
             format!(
-                "<system_out>{}</system_out>",
+                "<system-out>{}</system-out>\n",
                 htmlescape::encode_minimal(&command_result.stdout)
             )
             .as_bytes(),
         )?;
         if let Some(tmp_path) = &test_instance.command.tmp_path {
-            if tmp_path.exists() {
-                let rel_path = test_instance.test_id.rel_path.as_ref().unwrap();
-                let abs_reference_path = self.testcases_root.join(rel_path);
-                let sub_dir = if command_result.exit_code == 0 {
-                    "success"
-                } else {
-                    "different"
-                };
-                let mut abs_artifact_path = self.artifacts_root.join(sub_dir).join(rel_path);
-                if abs_artifact_path.exists() {
-                    abs_artifact_path.set_file_name(
-                        abs_artifact_path
-                            .file_name()
-                            .unwrap()
-                            .to_str()
-                            .unwrap()
-                            .to_string()
-                            + &Uuid::new_v4().to_string(),
-                    );
-                }
+            self.move_artifact(&tmp_path, out, &test_instance, &command_result)
+                .unwrap_or_else(|e| println!("INFO: {:?}", e));
+        }
+        out.write_all(b"</testcase>\n")?;
+        Ok(())
+    }
 
-                if abs_reference_path.is_dir() || tmp_path.is_file() {
-                    std::fs::create_dir_all(abs_artifact_path.parent().unwrap())?;
-                    std::fs::rename(&tmp_path, &abs_artifact_path)?;
-                    self.write_artifact(out, &abs_reference_path, &abs_artifact_path)?;
-                } else {
-                    let abs_artifact_dir = abs_artifact_path.parent().unwrap();
+    fn move_artifact(
+        &self,
+        tmp_path: &Path,
+        out: &mut BufWriter<&File>,
+        test_instance: &runnable::TestInstance,
+        command_result: &scheduler::TestCommandResult,
+    ) -> std::io::Result<()> {
+        if tmp_path.exists() {
+            let rel_path = test_instance.test_id.rel_path.as_ref().unwrap();
+            let abs_reference_path = self.testcases_root.join(rel_path);
+            let sub_dir = if command_result.exit_code == 0 {
+                "success"
+            } else {
+                "different"
+            };
+            let mut abs_artifact_path = self.artifacts_root.join(sub_dir).join(rel_path);
+            if abs_artifact_path.exists() {
+                abs_artifact_path.set_file_name(
+                    abs_artifact_path
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string()
+                        + &Uuid::new_v4().to_string(),
+                );
+            }
+
+            if abs_reference_path.is_dir() || tmp_path.is_file() {
+                std::fs::create_dir_all(abs_artifact_path.parent().unwrap())?;
+                std::fs::rename(&tmp_path, &abs_artifact_path)?;
+                self.write_artifact(out, &abs_reference_path, &abs_artifact_path)?;
+            } else {
+                let abs_artifact_dir = abs_artifact_path.parent().unwrap();
+                if std::fs::read_dir(tmp_path)?.next().is_some() {
                     std::fs::create_dir_all(&abs_artifact_dir)?;
-                    for entry in std::fs::read_dir(tmp_path)? {
-                        let from = entry?.path();
-                        let file_name = &from.file_name().unwrap();
-                        let to = abs_artifact_dir.join(file_name);
-                        std::fs::rename(&from, &to)?;
-                        self.write_artifact(out, &abs_reference_path, &abs_artifact_dir)?;
-                    }
                 }
+                for entry in std::fs::read_dir(tmp_path)? {
+                    let from = entry?.path();
+                    let file_name = &from.file_name().unwrap();
+                    let to = abs_artifact_dir.join(file_name);
+                    std::fs::rename(&from, &to)?;
+                    self.write_artifact(out, &abs_reference_path, &abs_artifact_dir)?;
+                }
+                std::fs::remove_dir(tmp_path)?;
             }
         }
-        out.write_all(b"</testcase>")?;
         Ok(())
     }
 

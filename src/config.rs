@@ -30,7 +30,7 @@ impl AppsConfig {
                 std::process::exit(-1);
             }
         };
-        let presets = [input_paths.preset.to_string()];
+        let presets: Vec<&str> = input_paths.preset.split("+").collect();
         Apps(
             self.0
                 .iter()
@@ -47,7 +47,7 @@ impl AppsConfig {
                     let build = Build::from(&build_config, &input_paths);
                     let tests = presets
                         .iter()
-                        .filter_map(|p| config.tests.get(p))
+                        .filter_map(|p| config.tests.get(*p))
                         .cloned()
                         .collect();
                     (
