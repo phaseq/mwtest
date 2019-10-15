@@ -106,7 +106,7 @@ fn main() {
     let apps_config = config::AppsConfig::load().expect("Failed to load apps.json!");
 
     if let Some(matches) = matches.subcommand_matches("build") {
-        let app_names = matches.values_of("test_app").unwrap().collect();
+        let app_names: Vec<_> = matches.values_of("test_app").unwrap().collect();
         let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
         cmd_build(&app_names, &apps);
         std::process::exit(0);
@@ -114,14 +114,14 @@ fn main() {
 
     if let Some(matches) = matches.subcommand_matches("list") {
         if let Some(apps) = matches.values_of("test_app") {
-            let apps = apps_config.select_build_and_preset(&apps.collect(), &input_paths);
+            let apps = apps_config.select_build_and_preset(&apps.collect::<Vec<_>>(), &input_paths);
             let app_tests = generate_app_tests(&matches, &input_paths, &apps);
             cmd_list_tests(&app_tests);
         } else {
             cmd_list_apps(&apps_config);
         }
     } else if let Some(matches) = matches.subcommand_matches("run") {
-        let app_names = matches.values_of("test_app").unwrap().collect();
+        let app_names: Vec<_> = matches.values_of("test_app").unwrap().collect();
         let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
         let app_tests = generate_app_tests(&matches, &input_paths, &apps);
         let out_dir = matches

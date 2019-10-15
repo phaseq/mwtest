@@ -19,48 +19,18 @@ impl AppsConfig {
     }
 
     pub fn select_build_and_preset(
-        self: &Self,
-        app_names: &Vec<&str>,
+        self: Self,
+        app_names: &[&str],
         input_paths: &InputPaths,
     ) -> Apps {
-        let build_type: &str = match &input_paths.build_type {
-            Some(b) => b,
-            None => {
-                println!("Please specify --build-type :)");
-                std::process::exit(-1);
-            }
-        };
-        let presets: Vec<&str> = input_paths.preset.split("+").collect();
         Apps(
             self.0
-                .iter()
+                .into_iter()
                 .filter(|(name, _config)| app_names.iter().any(|n| n == name || *n == "all"))
-                .map(|(name, config)| {
-                    let build_config = config.builds.get(build_type).unwrap_or_else(|| {
-                        println!("build '{}' not found in '{}'", build_type, name);
-                        std::process::exit(-1);
-                    });
-                    (name, config, build_config)
-                })
-                .filter(|(_name, _config, build_config)| !build_config.disabled)
-                .map(|(name, config, build_config)| {
-                    let build = Build::from(&build_config, &input_paths);
-                    let tests = presets
-                        .iter()
-                        .filter_map(|p| config.tests.get(*p))
-                        .cloned()
-                        .collect();
-                    (
-                        name.to_string(),
-                        App::from(
-                            input_paths,
-                            config.command.clone(),
-                            config.responsible.clone(),
-                            build,
-                            tests,
-                            config.globber_matches_parent,
-                        ),
-                    )
+                .filter_map(|(name, config)| {
+                    config
+                        .select_build_and_preset(&name, input_paths)
+                        .map(|app| (name, app))
                 })
                 .collect(),
         )
@@ -82,6 +52,44 @@ pub struct AppConfig {
     pub globber_matches_parent: bool,
     #[serde(default)]
     pub checkout_parent: bool, // TODO
+}
+impl AppConfig {
+    fn select_build_and_preset(
+        mut self: Self,
+        name: &str,
+        input_paths: &InputPaths,
+    ) -> Option<App> {
+        let build_type: &str = match &input_paths.build_type {
+            Some(b) => b,
+            None => {
+                println!("Please specify --build-type :)");
+                std::process::exit(-1);
+            }
+        };
+        let build_config = self.builds.remove(build_type).unwrap_or_else(|| {
+            println!("build '{}' not found in '{}'", build_type, name);
+            std::process::exit(-1);
+        });
+        if build_config.disabled {
+            return None;
+        }
+
+        let build = Build::from(&build_config, &input_paths);
+        let tests = input_paths
+            .preset
+            .split('+')
+            .filter_map(|p| self.tests.get(p))
+            .cloned()
+            .collect();
+        Some(App::from(
+            input_paths,
+            self.command,
+            self.responsible,
+            build,
+            tests,
+            self.globber_matches_parent,
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -286,8 +294,7 @@ impl TestGroup {
         }
         let args = app.command.clone().apply("{{input}}", &filter);
         let args = &args.0[1..];
-        let cwd_default = ".".to_string();
-        let cwd = app.build.cwd.as_ref().unwrap_or(&cwd_default);
+        let cwd = app.build.cwd.as_ref().map(|s| s.as_ref()).unwrap_or(".");
         let output = std::process::Command::new(exe)
             .arg("--gtest_list_tests")
             .args(args)
