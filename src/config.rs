@@ -438,7 +438,7 @@ impl InputPaths {
             }
             TestcasesLayout::Custom(path) => {
                 testcases_dir = path;
-                preset = "all";
+                preset = "custom";
             }
         }
         let testcases_dir = given_testcases_dir
