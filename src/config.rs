@@ -168,12 +168,12 @@ impl Build {
     fn from(build: &BuildConfig, input_paths: &InputPaths) -> Build {
         let exe = Build::apply_config_string(&build.exe, &input_paths).unwrap();
         if !PathBuf::from(&exe).exists() {
-            panic!("exe not found: {:?}", exe);
+            println!("WARNING: exe not found: {:?}", exe);
         }
         let dll = Build::apply_config_string(&build.dll, &input_paths);
         if let Some(dll) = &dll {
             if !PathBuf::from(&dll).exists() {
-                panic!("dll not found: {:?}", dll);
+                println!("WARNING: dll not found: {:?}", dll);
             }
         }
         let cwd = Build::apply_config_string(&build.cwd, &input_paths);
