@@ -20,7 +20,7 @@ impl AppsConfig {
 
     pub fn select_build_and_preset(
         self: Self,
-        app_names: &[&str],
+        app_names: &[String],
         input_paths: &InputPaths,
     ) -> Apps {
         Apps(
@@ -94,13 +94,13 @@ impl AppConfig {
 
 #[derive(Debug)]
 pub struct Apps(pub HashMap<String, App>);
-impl Apps {
+/*impl Apps {
     pub fn app_names(self: &Self) -> Vec<String> {
         let mut names: Vec<_> = self.0.iter().map(|(n, _)| n.clone()).collect();
         names.sort();
         names
     }
-}
+}*/
 
 #[derive(Debug, Clone)]
 pub struct App {
@@ -398,16 +398,16 @@ impl InputPaths {
     }
 
     pub fn from(
-        given_dev_dir: &Option<&str>,
-        given_build_dir: &Option<&str>,
-        given_testcases_dir: &Option<&str>,
-        given_build_type: &Option<&str>,
-        given_preset: &Option<&str>,
-        given_build_config: &Option<&str>,
+        given_dev_dir: Option<String>,
+        given_build_dir: Option<String>,
+        given_testcases_dir: Option<String>,
+        given_build_type: Option<String>,
+        given_preset: Option<String>,
+        given_build_config: Option<String>,
     ) -> InputPaths {
         let mut dev_dir: Option<PathBuf>;
         let mut build_dir: Option<PathBuf>;
-        let mut build_type: Option<&str>;
+        let build_type: Option<&str>;
         match InputPaths::guess_build_type() {
             BuildType::Dev(path) => {
                 dev_dir = Some(path.clone());
@@ -427,7 +427,7 @@ impl InputPaths {
         }
         dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
         build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
-        build_type = given_build_type.or(build_type);
+        let build_type = given_build_type.or(build_type.map(|s| s.to_string()));
 
         let testcases_dir: PathBuf;
         let preset: &str;
@@ -444,13 +444,15 @@ impl InputPaths {
         let testcases_dir = given_testcases_dir
             .map(PathBuf::from)
             .unwrap_or(testcases_dir);
-        let preset = given_preset.unwrap_or(preset).to_string();
+        let preset = given_preset
+            .unwrap_or_else(|| preset.to_string())
+            .to_string();
         if !testcases_dir.exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
             std::process::exit(-1);
         }
 
-        let build_config = given_build_config.unwrap_or("ReleaseUnicode").to_string();
+        let build_config = given_build_config.unwrap_or_else(|| "ReleaseUnicode".to_string());
 
         InputPaths {
             dev_dir,
