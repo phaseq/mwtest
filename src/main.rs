@@ -55,10 +55,8 @@ enum SubCommands {
     Run {
         app_names: Vec<String>,
 
-        // group
-        #[structopt(long)]
+        #[structopt(long, conflicts_with = "filter")]
         id: Option<String>,
-
         /// select ids that contain one of the given substrings
         #[structopt(long)]
         filter: Vec<String>,
@@ -67,7 +65,7 @@ enum SubCommands {
         verbose: bool,
 
         // group
-        #[structopt(short, long)]
+        #[structopt(short, long, conflicts_with = "xge")]
         parallel: bool,
         #[structopt(long)]
         xge: bool,
@@ -75,7 +73,7 @@ enum SubCommands {
         // group
         #[structopt(long, default_value = "1")]
         repeat: usize,
-        #[structopt(long, default_value = "0")]
+        #[structopt(long, default_value = "0", conflicts_with = "repeat")]
         repeat_if_failed: usize,
     },
 }
