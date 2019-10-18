@@ -26,7 +26,22 @@ impl AppsConfig {
         Apps(
             self.0
                 .into_iter()
-                .filter(|(name, _config)| app_names.iter().any(|n| n == name || *n == "all"))
+                .filter(|(name, config)| {
+                    app_names.iter().any(|n| {
+                        n == name
+                            || *n == "all"
+                            || config
+                                .alias
+                                .as_ref()
+                                .map(|aliases| aliases.iter().any(|a| a == n))
+                                .unwrap_or(false)
+                            || config
+                                .tags
+                                .as_ref()
+                                .map(|tags| tags.iter().any(|t| t == n))
+                                .unwrap_or(false)
+                    })
+                })
                 .filter_map(|(name, config)| {
                     config
                         .select_build_and_preset(&name, input_paths)
@@ -40,9 +55,9 @@ impl AppsConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub command: CommandTemplate,
-    pub responsible: String,                    // TODO
-    pub alias: Option<Vec<String>>,             // TODO
-    pub tags: Option<Vec<String>>,              // TODO
+    pub responsible: String, // TODO
+    pub alias: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
     pub accepted_returncodes: Option<Vec<u32>>, // TODO
     #[serde(default)]
     pub disabled: bool,   // TODO
@@ -94,13 +109,6 @@ impl AppConfig {
 
 #[derive(Debug)]
 pub struct Apps(pub HashMap<String, App>);
-/*impl Apps {
-    pub fn app_names(self: &Self) -> Vec<String> {
-        let mut names: Vec<_> = self.0.iter().map(|(n, _)| n.clone()).collect();
-        names.sort();
-        names
-    }
-}*/
 
 #[derive(Debug, Clone)]
 pub struct App {
@@ -405,8 +413,8 @@ impl InputPaths {
         given_preset: Option<String>,
         given_build_config: Option<String>,
     ) -> InputPaths {
-        let mut dev_dir: Option<PathBuf>;
-        let mut build_dir: Option<PathBuf>;
+        let dev_dir: Option<PathBuf>;
+        let build_dir: Option<PathBuf>;
         let build_type: Option<&str>;
         match InputPaths::guess_build_type() {
             BuildType::Dev(path) => {
@@ -425,9 +433,9 @@ impl InputPaths {
                 build_type = None;
             }
         }
-        dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
-        build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
-        let build_type = given_build_type.or(build_type.map(|s| s.to_string()));
+        let dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
+        let build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
+        let build_type = given_build_type.or_else(|| build_type.map(|s| s.to_string()));
 
         let testcases_dir: PathBuf;
         let preset: &str;

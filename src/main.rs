@@ -258,7 +258,7 @@ pub struct OutputPaths {
 }
 
 fn generate_app_tests(
-    app_names: &Vec<String>,
+    app_names: &[String],
     filter: Vec<String>,
     id: Option<String>,
     input_paths: &config::InputPaths,
