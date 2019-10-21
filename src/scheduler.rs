@@ -18,7 +18,6 @@ pub struct RunConfig {
     pub parallel: bool,
     pub xge: bool,
     pub repeat: RepeatStrategy,
-    pub no_timeout: bool,
 }
 
 #[derive(Debug, Clone)]

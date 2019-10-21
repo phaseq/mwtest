@@ -140,9 +140,14 @@ fn main() {
                 parallel,
                 xge,
                 repeat: repeat_strategy,
-                no_timeout,
             };
-            let success = cmd_run(&input_paths, &app_tests, &output_paths, &run_config);
+            let success = cmd_run(
+                &input_paths,
+                &app_tests,
+                &output_paths,
+                &run_config,
+                no_timeout,
+            );
             if !success {
                 std::process::exit(-1)
             }
@@ -203,6 +208,7 @@ fn cmd_run(
     test_apps: &[AppWithTests],
     output_paths: &OutputPaths,
     run_config: &scheduler::RunConfig,
+    no_timeout: bool,
 ) -> bool {
     if Path::exists(&output_paths.out_dir) {
         if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
@@ -221,12 +227,7 @@ fn cmd_run(
         output_paths.out_dir.to_str().unwrap()
     );
 
-    let tests = runnable::create_run_commands(
-        &input_paths,
-        &test_apps,
-        &output_paths,
-        run_config.no_timeout,
-    );
+    let tests = runnable::create_run_commands(&input_paths, &test_apps, &output_paths, no_timeout);
     if tests.is_empty() {
         println!("WARNING: No tests were selected.");
         std::process::exit(0); // counts as success
