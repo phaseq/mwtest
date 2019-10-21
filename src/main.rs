@@ -56,7 +56,8 @@ enum SubCommands {
         app_names: Vec<String>,
 
         #[structopt(long, conflicts_with = "filter")]
-        id: Option<String>,
+        id: Vec<String>,
+
         /// select ids that contain one of the given substrings
         #[structopt(long)]
         filter: Vec<String>,
@@ -64,17 +65,18 @@ enum SubCommands {
         #[structopt(short, long)]
         verbose: bool,
 
-        // group
         #[structopt(short, long, conflicts_with = "xge")]
         parallel: bool,
         #[structopt(long)]
         xge: bool,
 
-        // group
         #[structopt(long, default_value = "1")]
         repeat: usize,
         #[structopt(long, default_value = "0", conflicts_with = "repeat")]
         repeat_if_failed: usize,
+
+        #[structopt(long)]
+        no_timeout: bool,
     },
 }
 
@@ -101,7 +103,7 @@ fn main() {
         SubCommands::List { app_names } => {
             if !app_names.is_empty() {
                 let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-                let app_tests = generate_app_tests(&app_names, vec![], None, &input_paths, &apps);
+                let app_tests = generate_app_tests(&app_names, vec![], vec![], &input_paths, &apps);
                 cmd_list_tests(&app_tests);
             } else {
                 cmd_list_apps(&apps_config);
@@ -116,6 +118,7 @@ fn main() {
             xge,
             repeat,
             repeat_if_failed,
+            no_timeout,
         } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
             let app_tests = generate_app_tests(&app_names, filter, id, &input_paths, &apps);
@@ -137,6 +140,7 @@ fn main() {
                 parallel,
                 xge,
                 repeat: repeat_strategy,
+                no_timeout,
             };
             let success = cmd_run(&input_paths, &app_tests, &output_paths, &run_config);
             if !success {
@@ -217,7 +221,12 @@ fn cmd_run(
         output_paths.out_dir.to_str().unwrap()
     );
 
-    let tests = runnable::create_run_commands(&input_paths, &test_apps, &output_paths);
+    let tests = runnable::create_run_commands(
+        &input_paths,
+        &test_apps,
+        &output_paths,
+        run_config.no_timeout,
+    );
     if tests.is_empty() {
         println!("WARNING: No tests were selected.");
         std::process::exit(0); // counts as success
@@ -258,7 +267,7 @@ pub struct OutputPaths {
 fn generate_app_tests(
     app_names: &[String],
     filter: Vec<String>,
-    id: Option<String>,
+    id: Vec<String>,
     input_paths: &config::InputPaths,
     apps_config: &config::Apps,
 ) -> Vec<AppWithTests> {
@@ -312,15 +321,14 @@ fn generate_app_tests(
     apps
 }
 
-fn id_filter_from_args(filter: Vec<String>, id: Option<String>) -> Box<dyn Fn(&str) -> bool> {
+fn id_filter_from_args(filter: Vec<String>, id: Vec<String>) -> Box<dyn Fn(&str) -> bool> {
     let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
-    let id_token = id.map(|v| normalize(&v).to_string());
     Box::new(move |input: &str| {
         let input = normalize(input);
         if !filter.is_empty() {
             filter.iter().any(|f| input.contains(normalize(f).as_str()))
-        } else if let Some(id) = &id_token {
-            input == *id
+        } else if !id.is_empty() {
+            id.iter().any(|i| normalize(i) == input)
         } else {
             true
         }

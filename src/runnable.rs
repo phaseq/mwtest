@@ -7,6 +7,7 @@ pub fn create_run_commands<'a>(
     input_paths: &config::InputPaths,
     test_apps: &'a [crate::AppWithTests],
     output_paths: &crate::OutputPaths,
+    no_timeout: bool,
 ) -> Vec<TestInstanceCreator> {
     let mut tests: Vec<TestInstanceCreator> = Vec::new();
     for app in test_apps {
@@ -18,6 +19,11 @@ pub fn create_run_commands<'a>(
                 _ => panic!(
                     "Invalid execution style! Only 'singlethreaded', 'parallel', 'xge' allowed."
                 ),
+            };
+            let timeout = if no_timeout {
+                None
+            } else {
+                group.test_group.timeout
             };
             for test_id in &group.test_ids {
                 let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
@@ -31,7 +37,7 @@ pub fn create_run_commands<'a>(
                     app_name: app.name.clone(),
                     test_id: test_id.clone(),
                     execution_style: execution_style.clone(),
-                    timeout: group.test_group.timeout,
+                    timeout,
                     command_generator: generator,
                 });
             }
