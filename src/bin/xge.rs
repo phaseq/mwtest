@@ -56,9 +56,9 @@ fn execute_wrapped(id: u64, exe: &str, args: Vec<&String>) {
     match maybe_output {
         Ok(output) => {
             let exit_code = output.status.code().unwrap_or(-7787);
-            let stdout = str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
-            let stderr = str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
-            let output_str = stderr.to_owned() + stdout;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let output_str = stderr + stdout;
 
             report(id, exit_code, &output_str);
         }

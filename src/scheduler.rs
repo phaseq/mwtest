@@ -395,9 +395,9 @@ impl TestInstance {
         };
         let tmp_path = self.command.tmp_path.clone();
         let exit_code = output.status.code().unwrap_or(-7787);
-        let stdout = std::str::from_utf8(&output.stdout).unwrap_or("couldn't decode output!");
-        let stderr = std::str::from_utf8(&output.stderr).unwrap_or("couldn't decode output!");
-        let output_str = stderr.to_owned() + stdout;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output_str = stderr + stdout;
 
         // cleanup
         if let Some(tmp_path) = tmp_path {
@@ -407,7 +407,7 @@ impl TestInstance {
         }
         TestCommandResult {
             exit_code,
-            stdout: output_str,
+            stdout: output_str.to_string(),
         }
     }
 
