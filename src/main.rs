@@ -59,7 +59,7 @@ enum SubCommands {
         id: Vec<String>,
 
         /// select ids that contain one of the given substrings
-        #[structopt(long)]
+        #[structopt(short, long)]
         filter: Vec<String>,
 
         #[structopt(short, long)]
@@ -70,7 +70,7 @@ enum SubCommands {
         #[structopt(long)]
         xge: bool,
 
-        #[structopt(long, default_value = "1")]
+        #[structopt(short, long, default_value = "1")]
         repeat: usize,
         #[structopt(long, default_value = "0", conflicts_with = "repeat")]
         repeat_if_failed: usize,

@@ -1,6 +1,7 @@
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::BufRead;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
@@ -422,6 +423,11 @@ impl InputPaths {
                 build_dir = Some(path);
                 build_type = Some("dev-windows");
             }
+            BuildType::CMake(build_path, dev_path) => {
+                dev_dir = Some(dev_path);
+                build_dir = Some(build_path);
+                build_type = Some("cmake-windows");
+            }
             BuildType::Quickstart(path) => {
                 dev_dir = None;
                 build_dir = Some(path);
@@ -491,7 +497,9 @@ impl InputPaths {
     }
 
     fn guess_build_type() -> BuildType {
-        if let Some(dev_root) = InputPaths::find_dev_root() {
+        if let Some(layout) = InputPaths::find_cmake_layout() {
+            layout
+        } else if let Some(dev_root) = InputPaths::find_dev_root() {
             BuildType::Dev(dev_root.join("dev"))
         } else if InputPaths::is_quickstart() {
             BuildType::Quickstart(std::env::current_dir().unwrap())
@@ -508,6 +516,25 @@ impl InputPaths {
             }
         }
         TestcasesLayout::Custom(std::env::current_dir().unwrap())
+    }
+
+    fn find_cmake_layout() -> Option<BuildType> {
+        if let Ok(f) = std::fs::File::open("CMakeCache.txt") {
+            let mut reader = std::io::BufReader::new(f);
+            let mut line = String::new();
+            while let Ok(count) = reader.read_line(&mut line) {
+                if count == 0 {
+                    break;
+                }
+                if let Some(dev_path) = line.split("mwBuildAll_SOURCE_DIR:STATIC=").nth(1) {
+                    return Some(BuildType::CMake(
+                        PathBuf::from("."),
+                        PathBuf::from(dev_path.trim()),
+                    ));
+                }
+            }
+        }
+        None
     }
 
     fn find_dev_root() -> Option<PathBuf> {
@@ -537,6 +564,7 @@ impl InputPaths {
 
 enum BuildType {
     Dev(PathBuf),
+    CMake(PathBuf, PathBuf),
     Quickstart(PathBuf),
     None,
 }
