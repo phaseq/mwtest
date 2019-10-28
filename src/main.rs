@@ -103,7 +103,8 @@ fn main() {
         SubCommands::List { app_names } => {
             if !app_names.is_empty() {
                 let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-                let app_tests = generate_app_tests(&app_names, vec![], vec![], &input_paths, &apps);
+                let app_tests =
+                    generate_app_tests(&app_names, vec![], vec![], &input_paths, &apps, false);
                 cmd_list_tests(&app_tests);
             } else {
                 cmd_list_apps(&apps_config);
@@ -121,7 +122,16 @@ fn main() {
             no_timeout,
         } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-            let app_tests = generate_app_tests(&app_names, filter, id, &input_paths, &apps);
+            let can_run_raw_gtest =
+                filter.is_empty() && id.is_empty() && !parallel && !xge && repeat_if_failed == 0;
+            let app_tests = generate_app_tests(
+                &app_names,
+                filter,
+                id,
+                &input_paths,
+                &apps,
+                can_run_raw_gtest,
+            );
             let out_dir = args
                 .output_dir
                 .map(PathBuf::from)
@@ -272,8 +282,8 @@ fn generate_app_tests(
     id: Vec<String>,
     input_paths: &config::InputPaths,
     apps_config: &config::Apps,
+    can_run_raw_gtest: bool,
 ) -> Vec<AppWithTests> {
-    let can_run_raw_gtest = filter.is_empty() && id.is_empty();
     let id_filter = id_filter_from_args(filter, id);
     let apps: Vec<AppWithTests> = app_names
         .iter()

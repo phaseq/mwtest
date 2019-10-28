@@ -40,6 +40,7 @@ pub fn create_run_commands<'a>(
                         execution_style: execution_style.clone(),
                         timeout,
                         command_generator: generator,
+                        is_g_multitest: true,
                     });
                 }
                 None => {
@@ -57,6 +58,7 @@ pub fn create_run_commands<'a>(
                             execution_style: execution_style.clone(),
                             timeout,
                             command_generator: generator,
+                            is_g_multitest: false,
                         });
                     }
                 }
@@ -72,6 +74,7 @@ pub struct TestInstanceCreator {
     pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,
     pub command_generator: Box<CommandGenerator>,
+    pub is_g_multitest: bool,
 }
 unsafe impl Sync for TestInstanceCreator {}
 impl TestInstanceCreator {
@@ -82,6 +85,7 @@ impl TestInstanceCreator {
             execution_style: self.execution_style.clone(),
             timeout: self.timeout,
             command: (self.command_generator)(),
+            is_g_multitest: self.is_g_multitest,
         }
     }
 
@@ -108,6 +112,7 @@ pub struct TestInstance {
     pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,
     pub command: TestCommand,
+    pub is_g_multitest: bool,
 }
 
 #[derive(Debug, Clone)]

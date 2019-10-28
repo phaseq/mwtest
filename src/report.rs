@@ -6,10 +6,21 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+pub trait Reportable {
+    fn expect_additional_tests(&mut self, n: usize);
+    fn add(
+        &mut self,
+        test_instance: runnable::TestInstance,
+        test_result: &scheduler::TestCommandResult,
+    );
+}
+
 pub struct Report {
     std_out: CliLogger,
     file_logger: FileLogger,
     xml_report: XmlReport,
+    i: usize,
+    n: usize,
 }
 impl Report {
     pub fn new(artifacts_root: &Path, testcases_root: &str, verbose: bool) -> Report {
@@ -18,21 +29,27 @@ impl Report {
             std_out: CliLogger::create(verbose),
             file_logger: FileLogger::new(&artifacts_root),
             xml_report: XmlReport::create(&xml_location, &artifacts_root, &testcases_root).unwrap(),
+            i: 0,
+            n: 0,
         };
         report.std_out.init();
         report
     }
+}
+impl Reportable for Report {
+    fn expect_additional_tests(&mut self, n: usize) {
+        self.n += n;
+    }
 
-    pub fn add(
+    fn add(
         &mut self,
-        i: usize,
-        n: usize,
         test_instance: runnable::TestInstance,
         test_result: &scheduler::TestCommandResult,
     ) {
+        self.i += 1;
         self.std_out.add(
-            i,
-            n,
+            self.i,
+            self.n,
             &test_instance.app_name,
             &test_instance.test_id.id,
             &test_result,

@@ -1,5 +1,6 @@
 use crate::config;
 use crate::report;
+use crate::report::Reportable;
 #[cfg(test)]
 use crate::runnable::{ExecutionStyle, TestCommand};
 use crate::runnable::{TestInstance, TestInstanceCreator};
@@ -7,7 +8,7 @@ use crate::OutputPaths;
 use futures::future::{self, Either};
 use futures::select;
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::codec::{Decoder, FramedRead, LinesCodec};
 use tokio::prelude::*;
 use tokio_process::Command;
@@ -57,30 +58,30 @@ async fn run_report_local(
     output_paths: &OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
-    let mut report = report::Report::new(
+    let report = Arc::new(Mutex::new(report::Report::new(
         &output_paths.out_dir,
         input_paths
             .testcases_dir
             .to_str()
             .expect("Couldn't convert path to string!"),
         run_config.verbose,
-    );
-    run_local(tests, run_config, |i, n, test_instance, result| {
-        report.add(i, n, test_instance, &result)
-    })
-    .await
+    )));
+    run_local(tests, run_config, report).await
 }
 
-async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
+async fn run_local<Report: Reportable>(
     tests: Vec<TestInstanceCreator>,
     run_config: &RunConfig,
-    callback: F,
+    report: Arc<Mutex<Report>>,
 ) -> bool {
     let n = tests.len()
         * match run_config.repeat {
             RepeatStrategy::Repeat(n) => n,
             RepeatStrategy::RepeatIfFailed(_) => 1,
         };
+    {
+        report.lock().unwrap().expect_additional_tests(n);
+    }
 
     let n_workers = if run_config.parallel || run_config.xge {
         num_cpus::get()
@@ -97,20 +98,19 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
             futures::stream::iter(instances)
                 .map(|instance| {
                     async {
-                        let result = instance.run_async().await;
-                        (instance, result)
+                        if instance.is_g_multitest {
+                            run_gtest(instance, report.clone()).await
+                        } else {
+                            let result = instance.run_async().await;
+                            report.lock().unwrap().add(instance, &result);
+                            result.exit_code == 0
+                        }
                     }
                 })
                 .buffer_unordered(n_workers)
-                .fold(
-                    (true, callback, 0, repeat),
-                    |(mut success, mut callback, i, repeat), (test_instance, result)| {
-                        callback(i + 1, n, test_instance, &result);
-                        success &= result.exit_code == 0;
-                        future::ready((success, callback, i + 1, repeat))
-                    },
-                )
-                .map(|(success, _, _, _)| success)
+                .fold(true, |overall_success, success| {
+                    future::ready(overall_success && success)
+                })
                 .await
         }
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
@@ -132,36 +132,85 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                     }
                 })
                 .buffer_unordered(n_workers)
-                .fold(
-                    (true, callback, 0, n),
-                    |(mut success, mut callback, i, n), (_tic, results)| {
-                        for (test_instance, result) in results {
-                            callback(i + 1, n, test_instance, &result);
-                            success &= result.exit_code == 0;
-                        }
-                        future::ready((success, callback, i + 1, n))
-                    },
-                )
-                .map(|(success, _, _, _)| success)
+                .fold((true, report), |(mut success, report), (_tic, results)| {
+                    for (test_instance, result) in results {
+                        report.lock().unwrap().add(test_instance, &result);
+                        success &= result.exit_code == 0;
+                    }
+                    future::ready((success, report))
+                })
+                .map(|(success, _)| success)
                 .await
         }
     }
 }
 
-async fn run_gtest(tic: TestInstance) {
+async fn run_gtest<Report: Reportable>(tic: TestInstance, report: Arc<Mutex<Report>>) -> bool {
     let mut child = Command::new(&tic.command.command[0])
-            .args(tic.command.command[1..].iter())
-            .current_dir(&tic.command.cwd)
-            .spawn()
-            .expect("Failed to launch command!");
-    let mut reader = tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
+        .args(tic.command.command[1..].iter())
+        .current_dir(&tic.command.cwd)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to launch command!");
+    let mut reader =
+        tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
     let mut line = String::new();
+    let mut current_test = None;
+    let mut current_output = String::new();
+    let mut any_failed = false;
     loop {
-        let n_read = reader.read_line(&mut line).await.expect("Failed to read text!");
+        line.clear();
+        let n_read = reader
+            .read_line(&mut line)
+            .await
+            .expect("Failed to read text!");
+
         if n_read == 0 {
             break;
         }
+        // [ RUN      ] RunLocal_OpenGLWrapper.GetVersionTwoContexts
+        if line.starts_with("[ RUN      ]") {
+            current_test = Some(line[13..].trim_end().to_string());
+            current_output = line.clone();
+        } else {
+            current_output += &line;
+            let mut success = None;
+            // [       OK ] RunLocal_OpenGLWrapper.GetVersionTwoContexts (0 ms)
+            if line.starts_with("[       OK ]") {
+                success = Some(true);
+            }
+            // [  FAILED  ] RunLocal_OpenGLWrapper.GetVersionTwoContexts (0 ms)
+            else if line.starts_with("[  FAILED  ]") {
+                success = Some(false);
+                any_failed = false;
+            }
+            if let Some(success) = success {
+                let test_id = crate::TestId {
+                    id: current_test.as_ref().unwrap().clone(),
+                    rel_path: None,
+                };
+                let test_instance = TestInstance {
+                    app_name: current_test.clone().unwrap(),
+                    test_id,
+                    execution_style: crate::runnable::ExecutionStyle::Single,
+                    timeout: None,
+                    command: crate::runnable::TestCommand {
+                        command: vec![],
+                        cwd: "".into(),
+                        tmp_path: None,
+                    },
+                    is_g_multitest: false,
+                };
+                let exit_code = if success { 0 } else { 1 };
+                let result = TestCommandResult {
+                    exit_code,
+                    stdout: current_output.clone(),
+                };
+                report.lock().unwrap().add(test_instance, &result);
+            }
+        }
     }
+    any_failed
 }
 
 async fn run_report_xge(
@@ -178,26 +227,15 @@ async fn run_report_xge(
             .expect("Couldn't convert path to string!"),
         run_config.verbose,
     );
-    run_xge(
-        tests,
-        run_config,
-        |i, n, test_instance, result| report.add(i, n, test_instance, &result),
-        false,
-    )
-    .await
+    run_xge(tests, run_config, &mut report, false).await
 }
 
-async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
+async fn run_xge<Report: Reportable>(
     tests: Vec<TestInstanceCreator>,
     run_config: &RunConfig,
-    mut callback: F,
+    report: &mut Report,
     mock: bool,
 ) -> bool {
-    let n = tests.len()
-        * match run_config.repeat {
-            RepeatStrategy::Repeat(n) => n,
-            RepeatStrategy::RepeatIfFailed(_) => 1,
-        };
     let (mut child, xge_socket) = if mock {
         let (c, s) = xge_lib::xge_mock();
         (c, Either::Left(s))
@@ -216,9 +254,9 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
         RepeatStrategy::Repeat(repeat) => (repeat, 0),
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => (1, repeat_if_failed),
     };
+    report.expect_additional_tests(repeat * tests.len());
 
     let queue = Mutex::new(TestQueue::new(tests, repeat));
-    let mut i = 0;
     let mut done = false;
     let mut overall_success = true;
     while !done {
@@ -244,8 +282,7 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
                     )
                 };
                 overall_success &= success;
-                i += 1;
-                callback(i, n, test_instance, &result);
+                report.add(test_instance, &result);
                 done = is_done;
             }
         });
@@ -316,7 +353,7 @@ impl TestQueue {
     ) -> (TestInstance, bool) {
         self.in_flight -= 1;
         if !success {
-            if self.creators[id].1.len() < repeat_if_failed {
+            if self.creators[id].1.len() <= repeat_if_failed {
                 self.indices.push_back(id);
             }
         }
@@ -406,6 +443,7 @@ mod tests {
             execution_style: ExecutionStyle::Parallel,
             timeout: None,
             command_generator,
+            is_g_multitest: false,
         };
         vec![test]
     }
@@ -425,73 +463,105 @@ mod tests {
             execution_style: ExecutionStyle::Parallel,
             timeout: None,
             command_generator,
+            is_g_multitest: false,
         };
         vec![test]
     }
 
-    fn count_results(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
-        let mut count = 0;
-        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-        let success = runtime.block_on(async {
-            run_local(tests, &run_config, |_i, _n, _test_instance, _result| {
-                count += 1;
-            })
-            .await
+    fn make_echo_instance_for_gtest(output: &'static str) -> Vec<TestInstanceCreator> {
+        let command_generator = Box::new(move || TestCommand {
+            command: vec!["/bin/echo".into(), output.into()],
+            cwd: ".".into(),
+            tmp_path: None,
         });
+        let test = TestInstanceCreator {
+            app_name: "test".to_owned(),
+            test_id: crate::TestId {
+                id: "test_id".to_owned(),
+                rel_path: None,
+            },
+            execution_style: ExecutionStyle::Parallel,
+            timeout: None,
+            command_generator,
+            is_g_multitest: true,
+        };
+        vec![test]
+    }
+
+    struct CountingReport {
+        count: usize,
+    }
+    impl CountingReport {
+        fn new() -> Self {
+            Self { count: 0 }
+        }
+    }
+    impl Reportable for CountingReport {
+        fn expect_additional_tests(&mut self, _n: usize) {}
+        fn add(
+            &mut self,
+            _test_instance: crate::runnable::TestInstance,
+            _test_result: &crate::scheduler::TestCommandResult,
+        ) {
+            self.count += 1;
+        }
+    }
+
+    fn count_results(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let report = Arc::new(Mutex::new(CountingReport::new()));
+        let success =
+            runtime.block_on(async { run_local(tests, &run_config, report.clone()).await });
+        let count = report.lock().unwrap().count;
         (success, count)
     }
 
     fn count_results_xge(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
-        let mut count = 0;
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-        let success = runtime.block_on(async {
-            run_xge(
-                tests,
-                &run_config,
-                |_i, _n, _test_instance, _result| {
-                    count += 1;
-                },
-                true,
-            )
-            .await
-        });
-        (success, count)
+        let mut report = CountingReport::new();
+        let success =
+            runtime.block_on(async { run_xge(tests, &run_config, &mut report, true).await });
+        (success, report.count)
+    }
+
+    struct CollectingReport {
+        ids: Vec<String>,
+    }
+    impl CollectingReport {
+        fn new() -> Self {
+            Self { ids: vec![] }
+        }
+    }
+    impl Reportable for CollectingReport {
+        fn expect_additional_tests(&mut self, _n: usize) {}
+        fn add(
+            &mut self,
+            test_instance: crate::runnable::TestInstance,
+            _test_result: &crate::scheduler::TestCommandResult,
+        ) {
+            self.ids.push(test_instance.test_id.id);
+        }
     }
 
     fn collect_results(
         tests: Vec<TestInstanceCreator>,
         run_config: RunConfig,
     ) -> (bool, Vec<String>) {
-        let mut ids = vec![];
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-        let success = runtime.block_on(async {
-            run_local(tests, &run_config, |_i, _n, test_instance, _result| {
-                ids.push(test_instance.test_id.id);
-            })
-            .await
-        });
+        let report = Arc::new(Mutex::new(CollectingReport::new()));
+        let success =
+            runtime.block_on(async { run_local(tests, &run_config, report.clone()).await });
+        let ids = report.lock().unwrap().ids.clone();
         (success, ids)
     }
 
-    /*fn collect_results_xge(
-        tests: Vec<TestInstanceCreator>,
-        run_config: RunConfig,
-    ) -> (bool, Vec<String>) {
-        let mut ids = vec![];
+    fn collect_results_gtest(test: TestInstance) -> (bool, Vec<String>) {
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-        let success = runtime.block_on(async {
-            run_xge(
-                tests,
-                &run_config,
-                |_i, _n, test_instance, _result| {
-                    ids.push(test_instance.test_id.id);
-                },
-                true,
-            )
-            .await
-        });
+        let report = Arc::new(Mutex::new(CollectingReport::new()));
+        let success = runtime.block_on(async { run_gtest(test, report.clone()).await });
+        let ids = report.lock().unwrap().ids.clone();
         (success, ids)
-    }*/
+    }
 
     #[test]
     fn test_run_local_once() {
@@ -506,6 +576,42 @@ mod tests {
         );
         assert_eq!(success, true);
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_run_gtest() {
+        let tests = make_echo_instance_for_gtest(
+            r#"
+Some prefix
+[ RUN      ] Sample.Succeed
+[       OK ] Sample.Succeed
+[ RUN      ] Sample.Failed
+[  FAILED  ] Sample.Failed
+"#,
+        );
+        let (success, ids) = collect_results_gtest(tests[0].instantiate());
+        assert_eq!(success, false);
+        assert_eq!(ids, ["Sample.Succeed", "Sample.Failed"]);
+    }
+
+    #[test]
+    fn test_run_normal_and_gtest() {
+        let mut tests = make_echo_instance_for_gtest(
+            r#"
+Some prefix
+[ RUN      ] Sample.Succeed
+[       OK ] Sample.Succeed
+"#,
+        );
+        tests.push(make_whoami_instance().pop().unwrap());
+        let (success, ids) = collect_results(tests, RunConfig {
+                verbose: false,
+                parallel: true,
+                xge: false,
+                repeat: RepeatStrategy::Repeat(2),
+            },);
+        assert_eq!(success, false);
+        assert_eq!(ids, ["Sample.Succeed", "Sample.Succeed", "test_id", "test_id"]);
     }
 
     #[test]
@@ -598,6 +704,7 @@ mod tests {
             execution_style: ExecutionStyle::Parallel,
             timeout,
             command_generator,
+            is_g_multitest: false,
         }
     }
 
