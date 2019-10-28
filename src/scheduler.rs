@@ -196,137 +196,89 @@ async fn run_xge<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
         child.stdout().take().expect("failed to connect to stdout"),
         LinesCodec::new(),
     );
-    match run_config.repeat {
-        RepeatStrategy::Repeat(repeat) => {
-            // repeat each test exactly `repeat` times
-            let instances: Vec<_> = tests
-                .into_iter()
-                .flat_map(|tic| (0..repeat).map(move |_| (!tic.can_use_xge(), tic.instantiate())))
-                .collect();
-            let sender = async {
-                for (i, (local, instance)) in instances.iter().enumerate() {
-                    let request = xge_lib::StreamRequest {
-                        id: i as u64,
-                        title: instance.test_id.id.clone(),
-                        cwd: instance.command.cwd.clone(),
-                        command: instance.command.command.clone(),
-                        local: *local,
-                    };
+    let (repeat, repeat_if_failed) = match run_config.repeat {
+        RepeatStrategy::Repeat(repeat) => (repeat, 0),
+        RepeatStrategy::RepeatIfFailed(repeat_if_failed) => (1, repeat_if_failed),
+    };
+
+    let queue = Mutex::new(TestQueue::new(tests, repeat));
+    let mut i = 0;
+    let mut done = false;
+    let mut overall_success = true;
+    while !done {
+        let mut line = reader.next().map(|line| {
+            let line = line.unwrap().unwrap();
+            if line.starts_with("mwt ") {
+                if line.starts_with("mwt done") {
+                    done = true;
+                    return;
+                }
+                let stream_result =
+                    serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
+                let result = TestCommandResult {
+                    exit_code: stream_result.exit_code,
+                    stdout: stream_result.stdout,
+                };
+                let success = stream_result.exit_code == 0;
+                let (test_instance, is_done) = {
+                    queue.lock().unwrap().return_response(
+                        stream_result.id as usize,
+                        success,
+                        repeat_if_failed,
+                    )
+                };
+                overall_success &= success;
+                i += 1;
+                callback(i, n, test_instance, &result);
+                done = is_done;
+            }
+        });
+
+        let next_request = { queue.lock().unwrap().next_request() };
+        match next_request {
+            None => line.await,
+            Some(request) => {
+                let mut send_future = {
                     let message = serde_json::to_string(&request).unwrap();
-                    writer.send(message).await.unwrap();
-                }
-            };
-            let receiver = async {
-                let mut i = 0;
-                let mut success = true;
+                    writer.send(message).fuse()
+                };
 
-                while let Some(line) = reader.next().await {
-                    let line = line.unwrap();
-                    if line.starts_with("mwt ") {
-                        if line.starts_with("mwt done") {
-                            break;
-                        }
-                        let stream_result =
-                            serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
-                        let result = TestCommandResult {
-                            exit_code: stream_result.exit_code,
-                            stdout: stream_result.stdout,
-                        };
-                        success &= stream_result.exit_code == 0;
-                        i += 1;
-                        callback(
-                            i,
-                            n,
-                            instances[stream_result.id as usize].1.clone(),
-                            &result,
-                        );
-                        if i == instances.len() {
-                            break;
-                        }
-                    }
-                }
-                success
-            };
-            futures::future::join(sender, receiver).await.1
-        }
-        RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
-            // repeat failed tests
-
-            let queue = Mutex::new(TestQueue::new(tests));
-            let mut i = 0;
-            let mut done = false;
-            let mut overall_success = true;
-            while !done {
-                let mut line = reader.next().map(|line| {
-                    let line = line.unwrap().unwrap();
-                    if line.starts_with("mwt ") {
-                        if line.starts_with("mwt done") {
-                            done = true;
-                            return;
-                        }
-                        let stream_result =
-                            serde_json::from_str::<xge_lib::StreamResult>(&line[4..]).unwrap();
-                        let result = TestCommandResult {
-                            exit_code: stream_result.exit_code,
-                            stdout: stream_result.stdout,
-                        };
-                        let success = stream_result.exit_code == 0;
-                        let (test_instance, is_done) = {
-                            queue.lock().unwrap().return_response(
-                                stream_result.id as usize,
-                                success,
-                                repeat_if_failed,
-                            )
-                        };
-                        overall_success &= success;
-                        i += 1;
-                        callback(i, n, test_instance, &result);
-                        done = is_done;
-                    }
-                });
-
-                let next_request = { queue.lock().unwrap().next_request() };
-                match next_request {
-                    None => line.await,
-                    Some(request) => {
-                        let mut send_future = {
-                            let message = serde_json::to_string(&request).unwrap();
-                            writer.send(message).fuse()
-                        };
-
-                        loop {
-                            select! {
-                                _ = send_future => break,
-                                _ = line => {}
-                            };
-                        }
-                    }
+                loop {
+                    select! {
+                        _ = send_future => break,
+                        _ = line => {}
+                    };
                 }
             }
-            overall_success
         }
     }
+    overall_success
 }
 
 struct TestQueue {
     indices: VecDeque<usize>,
-    creators: Vec<(TestInstanceCreator, Option<TestInstance>, usize)>,
+    creators: Vec<(TestInstanceCreator, Vec<TestInstance>)>,
+    repeat: usize,
     in_flight: usize,
 }
 impl TestQueue {
-    fn new(tests: Vec<TestInstanceCreator>) -> TestQueue {
+    fn new(tests: Vec<TestInstanceCreator>, repeat: usize) -> TestQueue {
         TestQueue {
-            indices: (0..tests.len()).collect(),
-            creators: tests.into_iter().map(|tic| (tic, None, 0)).collect(),
+            indices: (0..tests.len())
+                .map(|i| std::iter::repeat(i).take(repeat))
+                .flatten()
+                .collect(),
+            creators: tests.into_iter().map(|tic| (tic, Vec::new())).collect(),
+            repeat,
             in_flight: 0,
         }
     }
     fn next_request(&mut self) -> Option<xge_lib::StreamRequest> {
         match self.indices.pop_front() {
             Some(send_idx) => {
-                let (tic, ti, _count) = &mut self.creators[send_idx];
+                let (tic, tis) = &mut self.creators[send_idx];
                 let instance = tic.instantiate();
-                *ti = Some(instance.clone());
+                tis.push(instance.clone());
                 self.in_flight += 1;
 
                 Some(xge_lib::StreamRequest {
@@ -348,13 +300,14 @@ impl TestQueue {
     ) -> (TestInstance, bool) {
         self.in_flight -= 1;
         if !success {
-            let (_tic, _ti, count) = &mut self.creators[id];
-            if *count < repeat_if_failed {
-                *count += 1;
+            if self.creators[id].1.len() < repeat_if_failed {
                 self.indices.push_back(id);
             }
         }
-        (self.creators[id].1.take().unwrap(), self.is_done())
+        (
+            self.creators[id].1[id % self.repeat].clone(),
+            self.is_done(),
+        )
     }
     fn is_done(&self) -> bool {
         self.in_flight == 0 && self.indices.is_empty()
