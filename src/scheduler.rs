@@ -69,10 +69,10 @@ async fn run_report_local(
     run_local(tests, run_config, report).await
 }
 
-async fn run_local<Report: Reportable>(
+async fn run_local(
     tests: Vec<TestInstanceCreator>,
     run_config: &RunConfig,
-    report: Arc<Mutex<Report>>,
+    report: Arc<Mutex<dyn Reportable>>,
 ) -> bool {
     let n = tests.len()
         * match run_config.repeat {
@@ -118,6 +118,7 @@ async fn run_local<Report: Reportable>(
             futures::stream::iter(tests)
                 .map(|tic| {
                     async {
+                        assert_eq!(tic.is_g_multitest, false);
                         let mut results = vec![];
                         for _ in 0..=repeat_if_failed {
                             let instance = tic.instantiate();
@@ -145,10 +146,10 @@ async fn run_local<Report: Reportable>(
     }
 }
 
-async fn run_gtest<Report: Reportable>(tic: TestInstance, report: Arc<Mutex<Report>>) -> bool {
-    let mut child = Command::new(&tic.command.command[0])
-        .args(tic.command.command[1..].iter())
-        .current_dir(&tic.command.cwd)
+async fn run_gtest(ti: TestInstance, report: Arc<Mutex<dyn Reportable>>) -> bool {
+    let mut child = Command::new(&ti.command.command[0])
+        .args(ti.command.command[1..].iter())
+        .current_dir(&ti.command.cwd)
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("Failed to launch command!");
@@ -230,10 +231,10 @@ async fn run_report_xge(
     run_xge(tests, run_config, &mut report, false).await
 }
 
-async fn run_xge<Report: Reportable>(
+async fn run_xge(
     tests: Vec<TestInstanceCreator>,
     run_config: &RunConfig,
-    report: &mut Report,
+    report: &mut dyn Reportable,
     mock: bool,
 ) -> bool {
     let (mut child, xge_socket) = if mock {
@@ -330,6 +331,7 @@ impl TestQueue {
         match self.indices.pop_front() {
             Some(send_idx) => {
                 let (tic, tis) = &mut self.creators[send_idx];
+                assert_eq!(tic.is_g_multitest, false);
                 let instance = tic.instantiate();
                 tis.push(instance.clone());
                 self.in_flight += 1;
