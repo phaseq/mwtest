@@ -246,6 +246,7 @@ pub struct AppWithTests {
 struct GroupWithTests {
     test_group: config::TestGroup,
     test_ids: Vec<TestId>,
+    test_filter: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -272,6 +273,7 @@ fn generate_app_tests(
     input_paths: &config::InputPaths,
     apps_config: &config::Apps,
 ) -> Vec<AppWithTests> {
+    let can_run_raw_gtest = filter.is_empty() && id.is_empty();
     let id_filter = id_filter_from_args(filter, id);
     let apps: Vec<AppWithTests> = app_names
         .iter()
@@ -297,13 +299,21 @@ fn generate_app_tests(
                     preset_config
                         .groups
                         .iter()
-                        .map(|test_group| GroupWithTests {
-                            test_group: test_group.clone(),
-                            test_ids: test_group
-                                .generate_test_inputs(&app, &preset_config, &input_paths)
-                                .into_iter()
-                                .filter(|f| id_filter(&f.id))
-                                .collect(),
+                        .map(|test_group| {
+                            let test_filter = if can_run_raw_gtest {
+                                test_group.find_gtest.clone()
+                            } else {
+                                None
+                            };
+                            GroupWithTests {
+                                test_group: test_group.clone(),
+                                test_ids: test_group
+                                    .generate_test_inputs(&app, &preset_config, &input_paths)
+                                    .into_iter()
+                                    .filter(|f| id_filter(&f.id))
+                                    .collect(),
+                                test_filter,
+                            }
                         })
                         .collect::<Vec<_>>()
                 })

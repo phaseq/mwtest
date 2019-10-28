@@ -148,6 +148,22 @@ async fn run_local<F: FnMut(usize, usize, TestInstance, &TestCommandResult)>(
     }
 }
 
+async fn run_gtest(tic: TestInstance) {
+    let mut child = Command::new(&tic.command.command[0])
+            .args(tic.command.command[1..].iter())
+            .current_dir(&tic.command.cwd)
+            .spawn()
+            .expect("Failed to launch command!");
+    let mut reader = tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
+    let mut line = String::new();
+    loop {
+        let n_read = reader.read_line(&mut line).await.expect("Failed to read text!");
+        if n_read == 0 {
+            break;
+        }
+    }
+}
+
 async fn run_report_xge(
     tests: Vec<TestInstanceCreator>,
     input_paths: &config::InputPaths,

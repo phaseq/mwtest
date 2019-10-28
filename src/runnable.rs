@@ -25,22 +25,42 @@ pub fn create_run_commands<'a>(
             } else {
                 group.test_group.timeout
             };
-            for test_id in &group.test_ids {
-                let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
-                let generator = test_command_generator(
-                    &app.app.command,
-                    &input_str,
-                    cwd,
-                    output_paths.tmp_dir.clone(),
-                );
-                tests.push(TestInstanceCreator {
-                    app_name: app.name.clone(),
-                    test_id: test_id.clone(),
-                    execution_style: execution_style.clone(),
-                    timeout,
-                    command_generator: generator,
-                });
-            }
+
+            match &group.test_filter {
+                Some(test_filter) => {
+                    let test_id = TestId {
+                        id: test_filter.clone(),
+                        rel_path: None,
+                    };
+                    let (_input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
+                    let generator = gtest_command_generator(&app.app.command, &test_filter, cwd);
+                    tests.push(TestInstanceCreator {
+                        app_name: app.name.clone(),
+                        test_id: test_id.clone(),
+                        execution_style: execution_style.clone(),
+                        timeout,
+                        command_generator: generator,
+                    });
+                }
+                None => {
+                    for test_id in &group.test_ids {
+                        let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
+                        let generator = test_command_generator(
+                            &app.app.command,
+                            &input_str,
+                            cwd,
+                            output_paths.tmp_dir.clone(),
+                        );
+                        tests.push(TestInstanceCreator {
+                            app_name: app.name.clone(),
+                            test_id: test_id.clone(),
+                            execution_style: execution_style.clone(),
+                            timeout,
+                            command_generator: generator,
+                        });
+                    }
+                }
+            };
         }
     }
     tests
@@ -170,4 +190,17 @@ fn test_command_generator(
             tmp_path: None,
         })
     }
+}
+
+fn gtest_command_generator(
+    command_template: &config::CommandTemplate,
+    input: &str,
+    cwd: String,
+) -> Box<CommandGenerator> {
+    let command = command_template.apply("{{input}}", &input);
+    Box::new(move || TestCommand {
+        command: command.0.clone(),
+        cwd: cwd.to_string(),
+        tmp_path: None,
+    })
 }
