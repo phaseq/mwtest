@@ -178,23 +178,45 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
         .args(ti.command.command[1..].iter())
         .current_dir(&ti.command.cwd)
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("Failed to launch command!");
-    let mut reader =
+
+    let mut stdout =
         tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
-    let mut line = String::new();
+    let mut stdout_line = String::new();
+    let mut stdout_active = true;
+
+    let mut stderr =
+        tokio::io::BufReader::new(child.stderr().take().expect("Failed to open StdErr"));
+    let mut stderr_line = String::new();
+    let mut stderr_active = true;
+
     let mut current_test = None;
     let mut current_output = String::new();
     let mut any_failed = false;
     loop {
-        line.clear();
-        let n_read = reader
-            .read_line(&mut line)
-            .await
-            .expect("Failed to read text!");
+        stdout_line.clear();
+        let mut stdout_fut = stdout.read_line(&mut stdout_line).fuse();
+
+        stderr_line.clear();
+        let mut stderr_fut = stderr.read_line(&mut stderr_line).fuse();
+
+        let (n_read, line, active): (usize, &String, &mut bool) = match (stdout_active, stderr_active) {
+            (true, true) => {
+                select! {
+                    n_read = stdout_fut => (n_read.unwrap(), &stdout_line, &mut stdout_active),
+                    n_read = stderr_fut => (n_read.unwrap(), &stderr_line, &mut stderr_active),
+                }
+            },
+            (true, false) => (stdout_fut.await.unwrap(), &stdout_line, &mut stdout_active),
+            (false, true) => (stderr_fut.await.unwrap(), &stderr_line, &mut stderr_active),
+            (false, false) => break,
+        };
 
         if n_read == 0 {
-            break;
+            *active = false;
+            continue;
         }
         // [ RUN      ] RunLocal_OpenGLWrapper.GetVersionTwoContexts
         if line.starts_with("[ RUN      ]") {
