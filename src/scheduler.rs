@@ -219,7 +219,6 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
                 };
                 let test_instance = TestInstance {
                     test_id,
-                    execution_style: crate::runnable::ExecutionStyle::Single,
                     command: crate::runnable::TestCommand {
                         command: vec![],
                         cwd: "".into(),
@@ -367,7 +366,7 @@ impl TestQueue {
     fn next_request(&mut self) -> Option<xge_lib::StreamRequest> {
         match self.indices.pop_front() {
             Some(send_idx) => {
-                let (_group, tic, tis) = &mut self.creators[send_idx];
+                let (group, tic, tis) = &mut self.creators[send_idx];
                 assert_eq!(tic.is_g_multitest, false);
                 let instance = tic.instantiate();
                 tis.push(instance.clone());
@@ -378,7 +377,7 @@ impl TestQueue {
                     title: instance.test_id.id.clone(),
                     cwd: instance.command.cwd.clone(),
                     command: instance.command.command.clone(),
-                    local: !tic.can_use_xge(),
+                    local: !group.can_use_xge(),
                 })
             }
             None => None,
@@ -473,7 +472,6 @@ mod tests {
                 id: "test_id".to_owned(),
                 rel_path: None,
             },
-            execution_style: ExecutionStyle::Parallel,
             command_generator,
             is_g_multitest: false,
         };
@@ -497,7 +495,6 @@ mod tests {
                 id: "test_id".to_owned(),
                 rel_path: None,
             },
-            execution_style: ExecutionStyle::Parallel,
             command_generator,
             is_g_multitest: false,
         };
@@ -521,7 +518,6 @@ mod tests {
                 id: "test_id".to_owned(),
                 rel_path: None,
             },
-            execution_style: ExecutionStyle::Parallel,
             command_generator,
             is_g_multitest: true,
         };
@@ -757,7 +753,6 @@ Some prefix
                     id: format!("{:?}", timeout),
                     rel_path: None,
                 },
-                execution_style: ExecutionStyle::Parallel,
                 command_generator,
                 is_g_multitest: false,
             }],

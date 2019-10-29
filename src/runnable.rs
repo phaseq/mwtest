@@ -49,7 +49,6 @@ pub fn create_run_commands<'a>(
                 );
                 test_generators.push(TestInstanceCreator {
                     test_id: test_id.clone(),
-                    execution_style: execution_style.clone(),
                     command_generator: generator,
                     is_g_multitest: false,
                 });
@@ -59,7 +58,6 @@ pub fn create_run_commands<'a>(
                     id: "<generator>".into(),
                     rel_path: None,
                 },
-                execution_style: execution_style.clone(),
                 command_generator,
                 is_g_multitest: true,
             });
@@ -88,11 +86,18 @@ impl TestGroup {
         let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
         std::time::Duration::from_millis((timeout * 1000.0) as u64)
     }
+
+    pub fn can_use_xge(&self) -> bool {
+        match self.execution_style {
+            ExecutionStyle::XGE => true,
+            ExecutionStyle::Parallel => false,
+            ExecutionStyle::Single => panic!("Not implemented :("),
+        }
+    }
 }
 
 pub struct TestInstanceCreator {
     pub test_id: TestId,
-    pub execution_style: ExecutionStyle,
     pub command_generator: Box<CommandGenerator>,
     pub is_g_multitest: bool,
 }
@@ -101,17 +106,8 @@ impl TestInstanceCreator {
     pub fn instantiate(&self) -> TestInstance {
         TestInstance {
             test_id: self.test_id.clone(),
-            execution_style: self.execution_style.clone(),
             command: (self.command_generator)(),
             is_g_multitest: self.is_g_multitest,
-        }
-    }
-
-    pub fn can_use_xge(&self) -> bool {
-        match self.execution_style {
-            ExecutionStyle::XGE => true,
-            ExecutionStyle::Parallel => false,
-            ExecutionStyle::Single => panic!("Not implemented :("),
         }
     }
 }
@@ -126,7 +122,6 @@ pub enum ExecutionStyle {
 #[derive(Clone)]
 pub struct TestInstance {
     pub test_id: TestId,
-    pub execution_style: ExecutionStyle,
     pub command: TestCommand,
     pub is_g_multitest: bool,
 }
