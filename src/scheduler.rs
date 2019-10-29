@@ -182,42 +182,44 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
         .spawn()
         .expect("Failed to launch command!");
 
-    let mut stdout =
-        tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
-    let mut stdout_line = String::new();
-    let mut stdout_active = true;
+    struct Pipe {
+        line: String,
+        active: bool,
+    }
+    let mut stdout = Pipe {line: String::new(), active: true};
+    let mut stderr = Pipe {line: String::new(), active: true};
 
-    let mut stderr =
+    let mut stdout_reader =
+        tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
+    let mut stderr_reader =
         tokio::io::BufReader::new(child.stderr().take().expect("Failed to open StdErr"));
-    let mut stderr_line = String::new();
-    let mut stderr_active = true;
 
     let mut current_test = None;
     let mut current_output = String::new();
     let mut any_failed = false;
     loop {
-        stdout_line.clear();
-        let mut stdout_fut = stdout.read_line(&mut stdout_line).fuse();
+        stdout.line.clear();
+        stderr.line.clear();
+        let mut stdout_fut = stdout_reader.read_line(&mut stdout.line).fuse();
+        let mut stderr_fut = stderr_reader.read_line(&mut stderr.line).fuse();
 
-        stderr_line.clear();
-        let mut stderr_fut = stderr.read_line(&mut stderr_line).fuse();
-
-        let (n_read, line, active): (usize, &String, &mut bool) = match (stdout_active, stderr_active) {
+        let (n_read, pipe) = match (stdout.active, stderr.active) {
             (true, true) => {
                 select! {
-                    n_read = stdout_fut => (n_read.unwrap(), &stdout_line, &mut stdout_active),
-                    n_read = stderr_fut => (n_read.unwrap(), &stderr_line, &mut stderr_active),
+                    n_read = stdout_fut => (n_read.unwrap(), &mut stdout),
+                    n_read = stderr_fut => (n_read.unwrap(), &mut stderr),
                 }
             },
-            (true, false) => (stdout_fut.await.unwrap(), &stdout_line, &mut stdout_active),
-            (false, true) => (stderr_fut.await.unwrap(), &stderr_line, &mut stderr_active),
+            (true, false) => (stdout_fut.await.unwrap(), &mut stdout),
+            (false, true) => (stderr_fut.await.unwrap(), &mut stderr),
             (false, false) => break,
         };
 
         if n_read == 0 {
-            *active = false;
+            pipe.active = false;
             continue;
         }
+        let line = &pipe.line;
         // [ RUN      ] RunLocal_OpenGLWrapper.GetVersionTwoContexts
         if line.starts_with("[ RUN      ]") {
             current_test = Some(line[13..].trim_end().to_string());
