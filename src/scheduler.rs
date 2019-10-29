@@ -3,7 +3,7 @@ use crate::report;
 use crate::report::Reportable;
 #[cfg(test)]
 use crate::runnable::{ExecutionStyle, TestCommand};
-use crate::runnable::{TestInstance, TestInstanceCreator};
+use crate::runnable::{TestGroup, TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
 use futures::future::{self, Either};
 use futures::select;
@@ -29,19 +29,19 @@ pub enum RepeatStrategy {
 
 pub fn run(
     input_paths: &config::InputPaths,
-    tests: Vec<TestInstanceCreator>,
+    test_groups: Vec<TestGroup>,
     output_paths: &crate::OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
     let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
     if run_config.xge {
         runtime.block_on(async {
-            run_report_xge(tests, &input_paths, &output_paths, &run_config).await
+            run_report_xge(test_groups, &input_paths, &output_paths, &run_config).await
             //.unwrap_or(false)
         })
     } else {
         runtime.block_on(async {
-            run_report_local(tests, &input_paths, &output_paths, &run_config).await
+            run_report_local(test_groups, &input_paths, &output_paths, &run_config).await
         })
     }
 }
@@ -53,7 +53,7 @@ pub struct TestCommandResult {
 }
 
 async fn run_report_local(
-    tests: Vec<TestInstanceCreator>,
+    test_groups: Vec<TestGroup>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
@@ -66,15 +66,16 @@ async fn run_report_local(
             .expect("Couldn't convert path to string!"),
         run_config.verbose,
     )));
-    run_local(tests, run_config, report).await
+    run_local(test_groups, run_config, report).await
 }
 
 async fn run_local(
-    tests: Vec<TestInstanceCreator>,
+    test_groups: Vec<TestGroup>,
     run_config: &RunConfig,
     report: Arc<Mutex<dyn Reportable>>,
 ) -> bool {
-    let n = tests.len()
+    let n_tests: usize = test_groups.iter().map(|g| g.tests.len()).sum();
+    let n = n_tests
         * match run_config.repeat {
             RepeatStrategy::Repeat(n) => n,
             RepeatStrategy::RepeatIfFailed(_) => 1,
@@ -89,14 +90,29 @@ async fn run_local(
         1
     };
 
+    let tests: Vec<(Arc<TestGroup>, TestInstanceCreator)> = test_groups
+        .into_iter()
+        .flat_map(|mut group| match group.gtest_generator.take() {
+            Some(gen) => vec![(Arc::new(group), gen)],
+            None => {
+                let tests: Vec<TestInstanceCreator> = group.tests.drain(0..).collect();
+                let group = Arc::new(group);
+                tests
+                    .into_iter()
+                    .map(|t| (group.clone(), t))
+                    .collect::<Vec<_>>()
+            }
+        })
+        .collect();
+
     match run_config.repeat {
         RepeatStrategy::Repeat(repeat) => {
             // repeat each test exactly `repeat` times
             let instances = tests
-                .into_iter()
-                .flat_map(|tic| (0..repeat).map(move |_| tic.instantiate()));
+                .iter()
+                .flat_map(|(group, tic)| (0..repeat).map(move |_| (group, tic.instantiate())));
             futures::stream::iter(instances)
-                .map(|instance| {
+                .map(|(group, instance)| {
                     async {
                         if instance.is_g_multitest {
                             run_gtest(instance, report.clone()).await
@@ -116,7 +132,7 @@ async fn run_local(
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
             // repeat each test up to `repeat_if_failed` times (or less, if it succeeds earlier)
             futures::stream::iter(tests)
-                .map(|tic| {
+                .map(|(group, tic)| {
                     async {
                         assert_eq!(tic.is_g_multitest, false);
                         let mut results = vec![];
@@ -215,7 +231,7 @@ async fn run_gtest(ti: TestInstance, report: Arc<Mutex<dyn Reportable>>) -> bool
 }
 
 async fn run_report_xge(
-    tests: Vec<TestInstanceCreator>,
+    test_groups: Vec<TestGroup>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
@@ -228,11 +244,11 @@ async fn run_report_xge(
             .expect("Couldn't convert path to string!"),
         run_config.verbose,
     );
-    run_xge(tests, run_config, &mut report, false).await
+    run_xge(test_groups, run_config, &mut report, false).await
 }
 
 async fn run_xge(
-    tests: Vec<TestInstanceCreator>,
+    test_groups: Vec<TestGroup>,
     run_config: &RunConfig,
     report: &mut dyn Reportable,
     mock: bool,
@@ -255,6 +271,10 @@ async fn run_xge(
         RepeatStrategy::Repeat(repeat) => (repeat, 0),
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => (1, repeat_if_failed),
     };
+    let tests: Vec<TestInstanceCreator> = test_groups
+        .into_iter()
+        .flat_map(|group| group.tests)
+        .collect();
     report.expect_additional_tests(repeat * tests.len());
 
     let queue = Mutex::new(TestQueue::new(tests, repeat));
@@ -430,7 +450,7 @@ impl TestInstance {
 mod tests {
     use super::*;
 
-    fn make_whoami_instance() -> Vec<TestInstanceCreator> {
+    fn make_whoami_instance() -> Vec<TestGroup> {
         let command_generator = Box::new(move || TestCommand {
             command: vec!["whoami".to_owned()],
             cwd: ".".to_owned(),
@@ -447,10 +467,16 @@ mod tests {
             command_generator,
             is_g_multitest: false,
         };
-        vec![test]
+        vec![TestGroup {
+            app_name: "test".to_owned(),
+            gtest_generator: None,
+            execution_style: ExecutionStyle::Parallel,
+            timeout: None,
+            tests: vec![test],
+        }]
     }
 
-    fn make_failing_ls_instance() -> Vec<TestInstanceCreator> {
+    fn make_failing_ls_instance() -> Vec<TestGroup> {
         let command_generator = Box::new(move || TestCommand {
             command: vec!["ls".to_string(), "/nonexistent-file".to_string()],
             cwd: ".".to_owned(),
@@ -467,10 +493,16 @@ mod tests {
             command_generator,
             is_g_multitest: false,
         };
-        vec![test]
+        vec![TestGroup {
+            app_name: "test".to_owned(),
+            gtest_generator: None,
+            execution_style: ExecutionStyle::Parallel,
+            timeout: None,
+            tests: vec![test],
+        }]
     }
 
-    fn make_echo_instance_for_gtest(output: &'static str) -> Vec<TestInstanceCreator> {
+    fn make_echo_instance_for_gtest(output: &'static str) -> Vec<TestGroup> {
         let command_generator = Box::new(move || TestCommand {
             command: vec!["/bin/echo".into(), output.into()],
             cwd: ".".into(),
@@ -487,7 +519,13 @@ mod tests {
             command_generator,
             is_g_multitest: true,
         };
-        vec![test]
+        vec![TestGroup {
+            app_name: "test".to_owned(),
+            gtest_generator: Some(test),
+            execution_style: ExecutionStyle::Parallel,
+            timeout: None,
+            tests: vec![], // TODO
+        }]
     }
 
     struct CountingReport {
@@ -509,7 +547,7 @@ mod tests {
         }
     }
 
-    fn count_results(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
+    fn count_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CountingReport::new()));
         let success =
@@ -518,7 +556,7 @@ mod tests {
         (success, count)
     }
 
-    fn count_results_xge(tests: Vec<TestInstanceCreator>, run_config: RunConfig) -> (bool, usize) {
+    fn count_results_xge(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let mut report = CountingReport::new();
         let success =
@@ -545,10 +583,7 @@ mod tests {
         }
     }
 
-    fn collect_results(
-        tests: Vec<TestInstanceCreator>,
-        run_config: RunConfig,
-    ) -> (bool, Vec<String>) {
+    fn collect_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, Vec<String>) {
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CollectingReport::new()));
         let success =
@@ -582,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_run_gtest() {
-        let tests = make_echo_instance_for_gtest(
+        let mut tests = make_echo_instance_for_gtest(
             r#"
 Some prefix
 [ RUN      ] Sample.Succeed
@@ -591,7 +626,8 @@ Some prefix
 [  FAILED  ] Sample.Failed
 "#,
         );
-        let (success, ids) = collect_results_gtest(tests[0].instantiate());
+        let (success, ids) =
+            collect_results_gtest(tests[0].gtest_generator.take().unwrap().instantiate());
         assert_eq!(success, false);
         assert_eq!(ids, ["Sample.Succeed", "Sample.Failed"]);
     }
@@ -606,14 +642,20 @@ Some prefix
 "#,
         );
         tests.push(make_whoami_instance().pop().unwrap());
-        let (success, ids) = collect_results(tests, RunConfig {
+        let (success, ids) = collect_results(
+            tests,
+            RunConfig {
                 verbose: false,
                 parallel: true,
                 xge: false,
                 repeat: RepeatStrategy::Repeat(2),
-            },);
+            },
+        );
         assert_eq!(success, false);
-        assert_eq!(ids, ["Sample.Succeed", "Sample.Succeed", "test_id", "test_id"]);
+        assert_eq!(
+            ids,
+            ["Sample.Succeed", "Sample.Succeed", "test_id", "test_id"]
+        );
     }
 
     #[test]
@@ -691,22 +733,28 @@ Some prefix
         assert_eq!(count, 6);
     }
 
-    fn make_sleep_instance(timeout: Option<f32>) -> TestInstanceCreator {
+    fn make_sleep_instance(timeout: Option<f32>) -> TestGroup {
         let command_generator = Box::new(move || TestCommand {
             command: vec!["sleep".to_owned(), "1".to_owned()],
             cwd: ".".to_owned(),
             tmp_path: None,
         });
-        TestInstanceCreator {
+        TestGroup {
             app_name: "test".to_owned(),
-            test_id: crate::TestId {
-                id: format!("{:?}", timeout),
-                rel_path: None,
-            },
+            gtest_generator: None,
             execution_style: ExecutionStyle::Parallel,
-            timeout,
-            command_generator,
-            is_g_multitest: false,
+            timeout: None,
+            tests: vec![TestInstanceCreator {
+                app_name: "test".to_owned(),
+                test_id: crate::TestId {
+                    id: format!("{:?}", timeout),
+                    rel_path: None,
+                },
+                execution_style: ExecutionStyle::Parallel,
+                timeout,
+                command_generator,
+                is_g_multitest: false,
+            }],
         }
     }
 

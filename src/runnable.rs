@@ -8,8 +8,8 @@ pub fn create_run_commands<'a>(
     test_apps: &'a [crate::AppWithTests],
     output_paths: &crate::OutputPaths,
     no_timeout: bool,
-) -> Vec<TestInstanceCreator> {
-    let mut tests: Vec<TestInstanceCreator> = Vec::new();
+) -> Vec<TestGroup> {
+    let mut tests: Vec<TestGroup> = Vec::new();
     for app in test_apps {
         for group in &app.tests {
             let execution_style = match group.test_group.execution_style.as_ref() {
@@ -26,46 +26,65 @@ pub fn create_run_commands<'a>(
                 group.test_group.timeout
             };
 
-            match &group.test_filter {
+            let gtest_generator = match &group.test_filter {
                 Some(test_filter) => {
                     let test_id = TestId {
                         id: test_filter.clone(),
                         rel_path: None,
                     };
                     let (_input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
-                    let generator = gtest_command_generator(&app.app.command, &test_filter, cwd);
-                    tests.push(TestInstanceCreator {
-                        app_name: app.name.clone(),
-                        test_id: test_id.clone(),
-                        execution_style: execution_style.clone(),
-                        timeout,
-                        command_generator: generator,
-                        is_g_multitest: true,
-                    });
+                    Some(gtest_command_generator(&app.app.command, &test_filter, cwd))
                 }
-                None => {
-                    for test_id in &group.test_ids {
-                        let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
-                        let generator = test_command_generator(
-                            &app.app.command,
-                            &input_str,
-                            cwd,
-                            output_paths.tmp_dir.clone(),
-                        );
-                        tests.push(TestInstanceCreator {
-                            app_name: app.name.clone(),
-                            test_id: test_id.clone(),
-                            execution_style: execution_style.clone(),
-                            timeout,
-                            command_generator: generator,
-                            is_g_multitest: false,
-                        });
-                    }
-                }
+                None => None,
             };
+
+            let mut test_generators = Vec::new();
+            for test_id in &group.test_ids {
+                let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
+                let generator = test_command_generator(
+                    &app.app.command,
+                    &input_str,
+                    cwd,
+                    output_paths.tmp_dir.clone(),
+                );
+                test_generators.push(TestInstanceCreator {
+                    app_name: app.name.clone(),
+                    test_id: test_id.clone(),
+                    execution_style: execution_style.clone(),
+                    timeout,
+                    command_generator: generator,
+                    is_g_multitest: false,
+                });
+            }
+            let gtest_generator = gtest_generator.map(|command_generator| TestInstanceCreator {
+                app_name: app.name.clone(),
+                test_id: TestId {
+                    id: "<generator>".into(),
+                    rel_path: None,
+                },
+                execution_style: execution_style.clone(),
+                timeout,
+                command_generator,
+                is_g_multitest: true,
+            });
+            tests.push(TestGroup {
+                app_name: app.name.clone(),
+                gtest_generator,
+                execution_style: execution_style.clone(),
+                timeout,
+                tests: test_generators,
+            })
         }
     }
     tests
+}
+
+pub struct TestGroup {
+    pub app_name: String,
+    pub gtest_generator: Option<TestInstanceCreator>,
+    pub execution_style: ExecutionStyle,
+    pub timeout: Option<f32>,
+    pub tests: Vec<TestInstanceCreator>,
 }
 
 pub struct TestInstanceCreator {
@@ -121,7 +140,7 @@ pub struct TestCommand {
     pub cwd: String,
     pub tmp_path: Option<PathBuf>,
 }
-type CommandGenerator = dyn Fn() -> TestCommand + Sync + Send;
+pub type CommandGenerator = dyn Fn() -> TestCommand + Sync + Send;
 
 fn test_id_to_input(
     test_id: &TestId,
