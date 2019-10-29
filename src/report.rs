@@ -10,6 +10,7 @@ pub trait Reportable {
     fn expect_additional_tests(&mut self, n: usize);
     fn add(
         &mut self,
+        app_name: &str,
         test_instance: runnable::TestInstance,
         test_result: &scheduler::TestCommandResult,
     );
@@ -43,6 +44,7 @@ impl Reportable for Report {
 
     fn add(
         &mut self,
+        app_name: &str,
         test_instance: runnable::TestInstance,
         test_result: &scheduler::TestCommandResult,
     ) {
@@ -50,13 +52,12 @@ impl Reportable for Report {
         self.std_out.add(
             self.i,
             self.n,
-            &test_instance.app_name,
+            app_name,
             &test_instance.test_id.id,
             &test_result,
         );
-        self.file_logger
-            .add(&test_instance.app_name, &test_result.stdout);
-        self.xml_report.add(test_instance, &test_result);
+        self.file_logger.add(app_name, &test_result.stdout);
+        self.xml_report.add(app_name, test_instance, &test_result);
     }
 }
 
@@ -82,10 +83,11 @@ impl XmlReport {
 
     fn add(
         &mut self,
+        app_name: &str,
         test_instance: runnable::TestInstance,
         test_result: &scheduler::TestCommandResult,
     ) {
-        match self.results.entry(test_instance.app_name.to_string()) {
+        match self.results.entry(app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
                 e.insert(vec![(test_instance, test_result.clone())]);
             }

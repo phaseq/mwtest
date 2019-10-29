@@ -48,7 +48,6 @@ pub fn create_run_commands<'a>(
                     output_paths.tmp_dir.clone(),
                 );
                 test_generators.push(TestInstanceCreator {
-                    app_name: app.name.clone(),
                     test_id: test_id.clone(),
                     execution_style: execution_style.clone(),
                     timeout,
@@ -57,7 +56,6 @@ pub fn create_run_commands<'a>(
                 });
             }
             let gtest_generator = gtest_generator.map(|command_generator| TestInstanceCreator {
-                app_name: app.name.clone(),
                 test_id: TestId {
                     id: "<generator>".into(),
                     rel_path: None,
@@ -88,7 +86,6 @@ pub struct TestGroup {
 }
 
 pub struct TestInstanceCreator {
-    pub app_name: String,
     pub test_id: TestId,
     pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,
@@ -99,7 +96,6 @@ unsafe impl Sync for TestInstanceCreator {}
 impl TestInstanceCreator {
     pub fn instantiate(&self) -> TestInstance {
         TestInstance {
-            app_name: self.app_name.clone(),
             test_id: self.test_id.clone(),
             execution_style: self.execution_style.clone(),
             timeout: self.timeout,
@@ -126,7 +122,6 @@ pub enum ExecutionStyle {
 
 #[derive(Clone)]
 pub struct TestInstance {
-    pub app_name: String,
     pub test_id: TestId,
     pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,

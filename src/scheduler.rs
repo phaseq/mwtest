@@ -113,12 +113,14 @@ async fn run_local(
                 .flat_map(|(group, tic)| (0..repeat).map(move |_| (group, tic.instantiate())));
             futures::stream::iter(instances)
                 .map(|(group, instance)| {
+                    let app_name = group.app_name.clone();
                     async {
+                        let app_name = app_name;
                         if instance.is_g_multitest {
-                            run_gtest(instance, report.clone()).await
+                            run_gtest(instance, &app_name, report.clone()).await
                         } else {
                             let result = instance.run_async().await;
-                            report.lock().unwrap().add(instance, &result);
+                            report.lock().unwrap().add(&app_name, instance, &result);
                             result.exit_code == 0
                         }
                     }
@@ -133,7 +135,9 @@ async fn run_local(
             // repeat each test up to `repeat_if_failed` times (or less, if it succeeds earlier)
             futures::stream::iter(tests)
                 .map(|(group, tic)| {
+                    let app_name = group.app_name.clone();
                     async {
+                        let app_name = app_name;
                         assert_eq!(tic.is_g_multitest, false);
                         let mut results = vec![];
                         for _ in 0..=repeat_if_failed {
@@ -145,24 +149,30 @@ async fn run_local(
                                 break;
                             }
                         }
-                        (tic, results)
+                        (app_name, tic, results)
                     }
                 })
                 .buffer_unordered(n_workers)
-                .fold((true, report), |(mut success, report), (_tic, results)| {
-                    for (test_instance, result) in results {
-                        report.lock().unwrap().add(test_instance, &result);
-                        success &= result.exit_code == 0;
-                    }
-                    future::ready((success, report))
-                })
+                .fold(
+                    (true, report),
+                    |(mut success, report), (app_name, _tic, results)| {
+                        for (test_instance, result) in results {
+                            report
+                                .lock()
+                                .unwrap()
+                                .add(&app_name, test_instance, &result);
+                            success &= result.exit_code == 0;
+                        }
+                        future::ready((success, report))
+                    },
+                )
                 .map(|(success, _)| success)
                 .await
         }
     }
 }
 
-async fn run_gtest(ti: TestInstance, report: Arc<Mutex<dyn Reportable>>) -> bool {
+async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Reportable>>) -> bool {
     let mut child = Command::new(&ti.command.command[0])
         .args(ti.command.command[1..].iter())
         .current_dir(&ti.command.cwd)
@@ -207,7 +217,6 @@ async fn run_gtest(ti: TestInstance, report: Arc<Mutex<dyn Reportable>>) -> bool
                     rel_path: None,
                 };
                 let test_instance = TestInstance {
-                    app_name: current_test.clone().unwrap(),
                     test_id,
                     execution_style: crate::runnable::ExecutionStyle::Single,
                     timeout: None,
@@ -223,7 +232,7 @@ async fn run_gtest(ti: TestInstance, report: Arc<Mutex<dyn Reportable>>) -> bool
                     exit_code,
                     stdout: current_output.clone(),
                 };
-                report.lock().unwrap().add(test_instance, &result);
+                report.lock().unwrap().add(app_name, test_instance, &result);
             }
         }
     }
@@ -271,13 +280,10 @@ async fn run_xge(
         RepeatStrategy::Repeat(repeat) => (repeat, 0),
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => (1, repeat_if_failed),
     };
-    let tests: Vec<TestInstanceCreator> = test_groups
-        .into_iter()
-        .flat_map(|group| group.tests)
-        .collect();
-    report.expect_additional_tests(repeat * tests.len());
+    let n_tests: usize = test_groups.iter().map(|g| g.tests.len()).sum();
+    report.expect_additional_tests(repeat * n_tests);
 
-    let queue = Mutex::new(TestQueue::new(tests, repeat));
+    let queue = Mutex::new(TestQueue::new(test_groups, repeat));
     let mut done = false;
     let mut overall_success = true;
     while !done {
@@ -295,7 +301,7 @@ async fn run_xge(
                     stdout: stream_result.stdout,
                 };
                 let success = stream_result.exit_code == 0;
-                let (test_instance, is_done) = {
+                let (group, test_instance, is_done) = {
                     queue.lock().unwrap().return_response(
                         stream_result.id as usize,
                         success,
@@ -303,7 +309,7 @@ async fn run_xge(
                     )
                 };
                 overall_success &= success;
-                report.add(test_instance, &result);
+                report.add(&group.app_name, test_instance, &result);
                 done = is_done;
             }
         });
@@ -331,18 +337,29 @@ async fn run_xge(
 
 struct TestQueue {
     indices: VecDeque<usize>,
-    creators: Vec<(TestInstanceCreator, Vec<TestInstance>)>,
+    creators: Vec<(Arc<TestGroup>, TestInstanceCreator, Vec<TestInstance>)>,
     repeat: usize,
     in_flight: usize,
 }
 impl TestQueue {
-    fn new(tests: Vec<TestInstanceCreator>, repeat: usize) -> TestQueue {
+    fn new(tests: Vec<TestGroup>, repeat: usize) -> TestQueue {
+        let creators: Vec<(Arc<TestGroup>, TestInstanceCreator, Vec<TestInstance>)> = tests
+            .into_iter()
+            .flat_map(|mut group| {
+                let tests: Vec<TestInstanceCreator> = group.tests.drain(0..).collect();
+                let group = Arc::new(group);
+                tests
+                    .into_iter()
+                    .map(|t| (group.clone(), t, vec![]))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         TestQueue {
-            indices: (0..tests.len())
+            indices: (0..creators.len())
                 .map(|i| std::iter::repeat(i).take(repeat))
                 .flatten()
                 .collect(),
-            creators: tests.into_iter().map(|tic| (tic, Vec::new())).collect(),
+            creators,
             repeat,
             in_flight: 0,
         }
@@ -350,7 +367,7 @@ impl TestQueue {
     fn next_request(&mut self) -> Option<xge_lib::StreamRequest> {
         match self.indices.pop_front() {
             Some(send_idx) => {
-                let (tic, tis) = &mut self.creators[send_idx];
+                let (_group, tic, tis) = &mut self.creators[send_idx];
                 assert_eq!(tic.is_g_multitest, false);
                 let instance = tic.instantiate();
                 tis.push(instance.clone());
@@ -372,15 +389,16 @@ impl TestQueue {
         id: usize,
         success: bool,
         repeat_if_failed: usize,
-    ) -> (TestInstance, bool) {
+    ) -> (Arc<TestGroup>, TestInstance, bool) {
         self.in_flight -= 1;
         if !success {
-            if self.creators[id].1.len() <= repeat_if_failed {
+            if self.creators[id].2.len() <= repeat_if_failed {
                 self.indices.push_back(id);
             }
         }
         (
-            self.creators[id].1[id % self.repeat].clone(),
+            self.creators[id].0.clone(),
+            self.creators[id].2[id % self.repeat].clone(),
             self.is_done(),
         )
     }
@@ -457,7 +475,6 @@ mod tests {
             tmp_path: None,
         });
         let test = TestInstanceCreator {
-            app_name: "test".to_owned(),
             test_id: crate::TestId {
                 id: "test_id".to_owned(),
                 rel_path: None,
@@ -483,7 +500,6 @@ mod tests {
             tmp_path: None,
         });
         let test = TestInstanceCreator {
-            app_name: "test".to_owned(),
             test_id: crate::TestId {
                 id: "test_id".to_owned(),
                 rel_path: None,
@@ -509,7 +525,6 @@ mod tests {
             tmp_path: None,
         });
         let test = TestInstanceCreator {
-            app_name: "test".to_owned(),
             test_id: crate::TestId {
                 id: "test_id".to_owned(),
                 rel_path: None,
@@ -540,6 +555,7 @@ mod tests {
         fn expect_additional_tests(&mut self, _n: usize) {}
         fn add(
             &mut self,
+            _app_name: &str,
             _test_instance: crate::runnable::TestInstance,
             _test_result: &crate::scheduler::TestCommandResult,
         ) {
@@ -576,6 +592,7 @@ mod tests {
         fn expect_additional_tests(&mut self, _n: usize) {}
         fn add(
             &mut self,
+            _app_name: &str,
             test_instance: crate::runnable::TestInstance,
             _test_result: &crate::scheduler::TestCommandResult,
         ) {
@@ -595,7 +612,7 @@ mod tests {
     fn collect_results_gtest(test: TestInstance) -> (bool, Vec<String>) {
         let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CollectingReport::new()));
-        let success = runtime.block_on(async { run_gtest(test, report.clone()).await });
+        let success = runtime.block_on(async { run_gtest(test, "app_name", report.clone()).await });
         let ids = report.lock().unwrap().ids.clone();
         (success, ids)
     }
@@ -745,7 +762,6 @@ Some prefix
             execution_style: ExecutionStyle::Parallel,
             timeout: None,
             tests: vec![TestInstanceCreator {
-                app_name: "test".to_owned(),
                 test_id: crate::TestId {
                     id: format!("{:?}", timeout),
                     rel_path: None,
