@@ -114,12 +114,13 @@ async fn run_local(
             futures::stream::iter(instances)
                 .map(|(group, instance)| {
                     let app_name = group.app_name.clone();
-                    async {
-                        let app_name = app_name;
+                    let timeout = group.get_timeout_duration();
+                    let report = report.clone();
+                    async move {
                         if instance.is_g_multitest {
-                            run_gtest(instance, &app_name, report.clone()).await
+                            run_gtest(instance, &app_name, report).await
                         } else {
-                            let result = instance.run_async().await;
+                            let result = instance.run_async(timeout).await;
                             report.lock().unwrap().add(&app_name, instance, &result);
                             result.exit_code == 0
                         }
@@ -136,13 +137,13 @@ async fn run_local(
             futures::stream::iter(tests)
                 .map(|(group, tic)| {
                     let app_name = group.app_name.clone();
-                    async {
-                        let app_name = app_name;
+                    let timeout = group.get_timeout_duration();
+                    async move {
                         assert_eq!(tic.is_g_multitest, false);
                         let mut results = vec![];
                         for _ in 0..=repeat_if_failed {
                             let instance = tic.instantiate();
-                            let result = instance.run_async().await;
+                            let result = instance.run_async(timeout).await;
                             let success = result.exit_code == 0;
                             results.push((instance, result));
                             if success {
@@ -219,7 +220,6 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
                 let test_instance = TestInstance {
                     test_id,
                     execution_style: crate::runnable::ExecutionStyle::Single,
-                    timeout: None,
                     command: crate::runnable::TestCommand {
                         command: vec![],
                         cwd: "".into(),
@@ -408,12 +408,12 @@ impl TestQueue {
 }
 
 impl TestInstance {
-    async fn run_async(&self) -> TestCommandResult {
+    async fn run_async(&self, timeout: std::time::Duration) -> TestCommandResult {
         let output = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
             .output()
-            .timeout(self.get_timeout_duration())
+            .timeout(timeout)
             .await;
         let output = match output {
             Ok(output) => output,
@@ -422,7 +422,7 @@ impl TestInstance {
                     exit_code: 1,
                     stdout: format!(
                         "[mwtest] terminated because {} second timeout was reached!",
-                        self.get_timeout_duration().as_secs()
+                        timeout.as_secs()
                     ),
                 };
             }
@@ -456,12 +456,6 @@ impl TestInstance {
             stdout: output_str.to_string(),
         }
     }
-
-    fn get_timeout_duration(&self) -> std::time::Duration {
-        // TODO: is there a more elegant way to handle this?
-        let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
-        std::time::Duration::from_millis((timeout * 1000.0) as u64)
-    }
 }
 
 #[cfg(test)]
@@ -480,7 +474,6 @@ mod tests {
                 rel_path: None,
             },
             execution_style: ExecutionStyle::Parallel,
-            timeout: None,
             command_generator,
             is_g_multitest: false,
         };
@@ -505,7 +498,6 @@ mod tests {
                 rel_path: None,
             },
             execution_style: ExecutionStyle::Parallel,
-            timeout: None,
             command_generator,
             is_g_multitest: false,
         };
@@ -530,7 +522,6 @@ mod tests {
                 rel_path: None,
             },
             execution_style: ExecutionStyle::Parallel,
-            timeout: None,
             command_generator,
             is_g_multitest: true,
         };
@@ -760,14 +751,13 @@ Some prefix
             app_name: "test".to_owned(),
             gtest_generator: None,
             execution_style: ExecutionStyle::Parallel,
-            timeout: None,
+            timeout,
             tests: vec![TestInstanceCreator {
                 test_id: crate::TestId {
                     id: format!("{:?}", timeout),
                     rel_path: None,
                 },
                 execution_style: ExecutionStyle::Parallel,
-                timeout,
                 command_generator,
                 is_g_multitest: false,
             }],

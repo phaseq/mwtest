@@ -50,7 +50,6 @@ pub fn create_run_commands<'a>(
                 test_generators.push(TestInstanceCreator {
                     test_id: test_id.clone(),
                     execution_style: execution_style.clone(),
-                    timeout,
                     command_generator: generator,
                     is_g_multitest: false,
                 });
@@ -61,7 +60,6 @@ pub fn create_run_commands<'a>(
                     rel_path: None,
                 },
                 execution_style: execution_style.clone(),
-                timeout,
                 command_generator,
                 is_g_multitest: true,
             });
@@ -84,11 +82,17 @@ pub struct TestGroup {
     pub timeout: Option<f32>,
     pub tests: Vec<TestInstanceCreator>,
 }
+impl TestGroup {
+    pub fn get_timeout_duration(&self) -> std::time::Duration {
+        // TODO: is there a more elegant way to handle this?
+        let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
+        std::time::Duration::from_millis((timeout * 1000.0) as u64)
+    }
+}
 
 pub struct TestInstanceCreator {
     pub test_id: TestId,
     pub execution_style: ExecutionStyle,
-    pub timeout: Option<f32>,
     pub command_generator: Box<CommandGenerator>,
     pub is_g_multitest: bool,
 }
@@ -98,7 +102,6 @@ impl TestInstanceCreator {
         TestInstance {
             test_id: self.test_id.clone(),
             execution_style: self.execution_style.clone(),
-            timeout: self.timeout,
             command: (self.command_generator)(),
             is_g_multitest: self.is_g_multitest,
         }
@@ -124,7 +127,6 @@ pub enum ExecutionStyle {
 pub struct TestInstance {
     pub test_id: TestId,
     pub execution_style: ExecutionStyle,
-    pub timeout: Option<f32>,
     pub command: TestCommand,
     pub is_g_multitest: bool,
 }
