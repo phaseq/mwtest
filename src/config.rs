@@ -367,13 +367,6 @@ pub struct InputPaths {
     pub build_config: String,
 }
 impl InputPaths {
-    pub fn get_registered_tests() -> Vec<String> {
-        let path = InputPaths::mwtest_config_root().join("apps.json");
-        let file = File::open(path).expect("didn't find apps.json!");
-        let content: AppsConfig = serde_json::from_reader(file).unwrap();
-        content.0.keys().cloned().collect()
-    }
-
     fn apply_to(&self, string: &str) -> String {
         let mut s = string.to_string();
         if s.contains("{{dev_dir}}") {

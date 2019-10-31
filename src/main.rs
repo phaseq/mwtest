@@ -103,8 +103,7 @@ fn main() {
         SubCommands::List { app_names } => {
             if !app_names.is_empty() {
                 let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-                let app_tests =
-                    generate_app_tests(&app_names, vec![], vec![], &input_paths, &apps, false);
+                let app_tests = generate_app_tests(vec![], vec![], &input_paths, &apps, false);
                 cmd_list_tests(&app_tests);
             } else {
                 cmd_list_apps(&apps_config);
@@ -124,14 +123,7 @@ fn main() {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
             let can_run_raw_gtest =
                 filter.is_empty() && id.is_empty() && !parallel && !xge && repeat_if_failed == 0;
-            let app_tests = generate_app_tests(
-                &app_names,
-                filter,
-                id,
-                &input_paths,
-                &apps,
-                can_run_raw_gtest,
-            );
+            let app_tests = generate_app_tests(filter, id, &input_paths, &apps, can_run_raw_gtest);
             let out_dir = args
                 .output_dir
                 .map(PathBuf::from)
@@ -275,7 +267,6 @@ pub struct OutputPaths {
 }
 
 fn generate_app_tests(
-    app_names: &[String],
     filter: Vec<String>,
     id: Vec<String>,
     input_paths: &config::InputPaths,
@@ -283,22 +274,10 @@ fn generate_app_tests(
     can_run_raw_gtest: bool,
 ) -> Vec<AppWithTests> {
     let id_filter = id_filter_from_args(filter, id);
-    let apps: Vec<AppWithTests> = app_names
+    let apps: Vec<AppWithTests> = apps_config
+        .0
         .iter()
-        .map(|app_name| {
-            // get app for string from command line
-            let app = match apps_config.0.get(app_name) {
-                Some(app) => app,
-                None => {
-                    let registered_tests = config::InputPaths::get_registered_tests();
-                    println!(
-                        "ERROR: \"{}\" not found: must be one of {:?}",
-                        app_name, registered_tests
-                    );
-                    std::process::exit(-1);
-                }
-            };
-
+        .map(|(app_name, app)| {
             // populate with tests
             let tests: Vec<GroupWithTests> = app
                 .tests
