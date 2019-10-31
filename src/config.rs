@@ -29,17 +29,18 @@ impl AppsConfig {
                 .into_iter()
                 .filter(|(name, config)| {
                     app_names.iter().any(|n| {
-                        n == name
-                            || *n == "all"
+                        let n = n.to_lowercase();
+                        n == name.to_lowercase()
+                            || n == "all"
                             || config
                                 .alias
                                 .as_ref()
-                                .map(|aliases| aliases.iter().any(|a| a == n))
+                                .map(|aliases| aliases.iter().any(|a| a.to_lowercase() == n))
                                 .unwrap_or(false)
                             || config
                                 .tags
                                 .as_ref()
-                                .map(|tags| tags.iter().any(|t| t == n))
+                                .map(|tags| tags.iter().any(|t| t.to_lowercase() == n))
                                 .unwrap_or(false)
                     })
                 })

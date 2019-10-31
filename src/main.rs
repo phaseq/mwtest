@@ -97,7 +97,7 @@ fn main() {
     match args.cmd {
         SubCommands::Build { app_names } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-            cmd_build(&app_names, &apps);
+            cmd_build(&apps);
             std::process::exit(0);
         }
         SubCommands::List { app_names } => {
@@ -165,20 +165,18 @@ fn main() {
     }
 }
 
-fn cmd_build(test_names: &[String], apps: &config::Apps) {
+fn cmd_build(apps: &config::Apps) {
     let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
-    for (name, dep) in test_names
-        .iter()
-        .map(|n| (n, &apps.0.get(n).unwrap().build))
-    {
-        if dep.solution.is_none() || dep.project.is_none() {
+    for (name, app) in apps.0.iter() {
+        let build = &app.build;
+        if build.solution.is_none() || build.project.is_none() {
             println!("ERROR: no solution/project defined for {}", name);
             std::process::exit(-1);
         }
         let deps = dependencies
-            .entry(dep.solution.as_ref().unwrap())
+            .entry(build.solution.as_ref().unwrap())
             .or_insert_with(Vec::new);
-        (*deps).push(dep.project.as_ref().unwrap());
+        (*deps).push(build.project.as_ref().unwrap());
     }
     for (solution, projects) in dependencies {
         let projects = projects.join(",");

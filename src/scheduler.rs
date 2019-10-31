@@ -186,8 +186,14 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
         line: String,
         active: bool,
     }
-    let mut stdout = Pipe {line: String::new(), active: true};
-    let mut stderr = Pipe {line: String::new(), active: true};
+    let mut stdout = Pipe {
+        line: String::new(),
+        active: true,
+    };
+    let mut stderr = Pipe {
+        line: String::new(),
+        active: true,
+    };
 
     let mut stdout_reader =
         tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
@@ -209,7 +215,7 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
                     n_read = stdout_fut => (n_read.unwrap(), &mut stdout),
                     n_read = stderr_fut => (n_read.unwrap(), &mut stderr),
                 }
-            },
+            }
             (true, false) => (stdout_fut.await.unwrap(), &mut stdout),
             (false, true) => (stderr_fut.await.unwrap(), &mut stderr),
             (false, false) => break,
