@@ -72,7 +72,7 @@ enum SubCommands {
 
         #[structopt(short, long, default_value = "1")]
         repeat: usize,
-        #[structopt(long, default_value = "0", conflicts_with = "repeat")]
+        #[structopt(long, default_value = "0")]
         repeat_if_failed: usize,
 
         #[structopt(long)]
