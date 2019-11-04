@@ -51,6 +51,9 @@ enum SubCommands {
     },
     List {
         app_names: Vec<String>,
+        /// select ids that contain one of the given substrings
+        #[structopt(short, long)]
+        filter: Vec<String>,
     },
     Run {
         app_names: Vec<String>,
@@ -100,10 +103,10 @@ fn main() {
             cmd_build(&apps);
             std::process::exit(0);
         }
-        SubCommands::List { app_names } => {
+        SubCommands::List { app_names, filter } => {
             if !app_names.is_empty() {
                 let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-                let app_tests = generate_app_tests(vec![], vec![], &input_paths, &apps, false);
+                let app_tests = generate_app_tests(filter, vec![], &input_paths, &apps, false);
                 cmd_list_tests(&app_tests);
             } else {
                 cmd_list_apps(&apps_config);

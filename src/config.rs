@@ -177,15 +177,15 @@ pub struct Build {
 impl Build {
     fn from(build: &BuildConfig, input_paths: &InputPaths) -> Build {
         let exe = Build::apply_config_string(&build.exe, &input_paths).unwrap();
-        if !PathBuf::from(&exe).exists() {
-            println!("WARNING: exe not found: {:?}", exe);
-        }
+        //if !PathBuf::from(&exe).exists() {
+        //    println!("WARNING: exe not found: {:?}", exe);
+        //}
         let dll = Build::apply_config_string(&build.dll, &input_paths);
-        if let Some(dll) = &dll {
-            if !PathBuf::from(&dll).exists() {
-                println!("WARNING: dll not found: {:?}", dll);
-            }
-        }
+        //if let Some(dll) = &dll {
+        //    if !PathBuf::from(&dll).exists() {
+        //        println!("WARNING: dll not found: {:?}", dll);
+        //    }
+        //}
         let cwd = Build::apply_config_string(&build.cwd, &input_paths);
         let solution = Build::apply_config_string(&build.solution, &input_paths);
         Build {
