@@ -5,13 +5,13 @@ use crate::report::Reportable;
 use crate::runnable::{ExecutionStyle, TestCommand};
 use crate::runnable::{TestGroup, TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
-use futures::future::{self, Either};
+use futures::prelude::*;
 use futures::select;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio::codec::{Decoder, FramedRead, LinesCodec};
+use tokio::io::AsyncBufReadExt;
 use tokio::prelude::*;
-use tokio_process::Command;
+use tokio::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -33,7 +33,7 @@ pub fn run(
     output_paths: &crate::OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
-    let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+    let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
     if run_config.xge {
         runtime.block_on(async {
             run_report_xge(test_groups, &input_paths, &output_paths, &run_config).await
@@ -174,7 +174,7 @@ async fn run_local(
 }
 
 async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Reportable>>) -> bool {
-    let mut child = Command::new(&ti.command.command[0])
+    let mut child: tokio::process::Child = Command::new(&ti.command.command[0])
         .args(ti.command.command[1..].iter())
         .current_dir(&ti.command.cwd)
         .stdout(std::process::Stdio::piped())
@@ -291,20 +291,16 @@ async fn run_xge(
     report: &mut dyn Reportable,
     mock: bool,
 ) -> bool {
-    let (mut child, xge_socket) = if mock {
-        let (c, s) = xge_lib::xge_mock();
-        (c, Either::Left(s))
+    let (mut child, mut xge_socket) = if mock {
+        let (c, s) = xge_lib::xge_mock().await;
+        (c, Box::new(s.expect("remote client failed to connect")))
     } else {
-        let (c, s) = xge_lib::xge();
-        (c, Either::Right(s))
+        let (c, s) = xge_lib::xge().await;
+        (c, Box::new(s.expect("remote client failed to connect")))
     };
-    let (mut writer, mut _reader) = LinesCodec::new()
-        .framed(xge_socket.await.expect("remote client failed to connect"))
-        .split();
-    let mut reader = FramedRead::new(
-        child.stdout().take().expect("failed to connect to stdout"),
-        LinesCodec::new(),
-    );
+    let mut reader =
+        tokio::io::BufReader::new(child.stdout().take().expect("failed to connect to stdout"))
+            .lines();
     let (repeat, repeat_if_failed) = match run_config.repeat {
         RepeatStrategy::Repeat(repeat) => (repeat, 0),
         RepeatStrategy::RepeatIfFailed(repeat_if_failed) => (1, repeat_if_failed),
@@ -316,7 +312,7 @@ async fn run_xge(
     let mut done = false;
     let mut overall_success = true;
     while !done {
-        let mut line = reader.next().map(|line| {
+        let mut line = Box::pin(reader.next_line().map(|line| {
             let line = line.unwrap().unwrap();
             if line.starts_with("mwt ") {
                 if line.starts_with("mwt done") {
@@ -341,16 +337,14 @@ async fn run_xge(
                 report.add(&group.app_name, test_instance, &result);
                 done = is_done;
             }
-        });
+        }));
 
         let next_request = { queue.lock().unwrap().next_request() };
         match next_request {
             None => line.await,
             Some(request) => {
-                let mut send_future = {
-                    let message = serde_json::to_string(&request).unwrap();
-                    writer.send(message).fuse()
-                };
+                let message = serde_json::to_string(&request).unwrap() + "\n";
+                let mut send_future = { xge_socket.write_all(message.as_bytes()).fuse() };
 
                 loop {
                     select! {
@@ -438,12 +432,11 @@ impl TestQueue {
 
 impl TestInstance {
     async fn run_async(&self, timeout: std::time::Duration) -> TestCommandResult {
-        let output = Command::new(&self.command.command[0])
+        let output_future = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
-            .output()
-            .timeout(timeout)
-            .await;
+            .output();
+        let output = tokio::time::timeout(timeout, output_future).await;
         let output = match output {
             Ok(output) => output,
             Err(_) => {
@@ -581,7 +574,7 @@ mod tests {
     }
 
     fn count_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
-        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CountingReport::new()));
         let success =
             runtime.block_on(async { run_local(tests, &run_config, report.clone()).await });
@@ -590,7 +583,7 @@ mod tests {
     }
 
     fn count_results_xge(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
-        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let mut report = CountingReport::new();
         let success =
             runtime.block_on(async { run_xge(tests, &run_config, &mut report, true).await });
@@ -618,7 +611,7 @@ mod tests {
     }
 
     fn collect_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, Vec<String>) {
-        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CollectingReport::new()));
         let success =
             runtime.block_on(async { run_local(tests, &run_config, report.clone()).await });
@@ -627,7 +620,7 @@ mod tests {
     }
 
     fn collect_results_gtest(test: TestInstance) -> (bool, Vec<String>) {
-        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CollectingReport::new()));
         let success = runtime.block_on(async { run_gtest(test, "app_name", report.clone()).await });
         let ids = report.lock().unwrap().ids.clone();

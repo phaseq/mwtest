@@ -16,10 +16,11 @@ serde = ">= 1.0.84"
 glob = ">= 0.2"
 num_cpus = ">= 1.9.0"
 htmlescape = ">= 0.3.1"
-tokio = ">= 0.2.0-alpha.1"
-tokio-process = ">= 0.3.0-alpha.1"
-tokio-timer = ">= 0.3.0-alpha.1"
-futures-preview = { version = ">= 0.3.0-alpha.18", features=["async-await", "nightly"] }
+futures = "0.3.*"
+
+[dependencies.tokio]
+version = "0.2.*"
+features = ["net", "process", "io-util", "time"]
 
 [lib]
 name = "xge_lib"

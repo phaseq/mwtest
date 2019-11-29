@@ -1,7 +1,6 @@
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::prelude::*;
-use tokio_process::Command;
+use tokio::process::Command;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamRequest {
@@ -19,12 +18,10 @@ pub struct StreamResult {
     pub stdout: String,
 }
 
-pub fn xge() -> (
-    tokio_process::Child,
-    impl Future<Output = std::io::Result<TcpStream>>,
-) {
-    let listener =
-        TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
+pub async fn xge() -> (tokio::process::Child, std::io::Result<TcpStream>) {
+    let mut listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
     let parent = std::env::current_exe().unwrap();
     let parent = parent.parent().unwrap();
@@ -39,22 +36,14 @@ pub fn xge() -> (
         .spawn()
         .expect("could not spawn XGE client!");
 
-    (
-        client_process,
-        listener
-            .incoming()
-            .take(1)
-            .collect::<Vec<_>>()
-            .map(|mut v| v.remove(0)),
-    )
+    let incoming = listener.accept().await.map(|r| r.0);
+    (client_process, incoming)
 }
 
-pub fn xge_mock() -> (
-    tokio_process::Child,
-    impl Future<Output = std::io::Result<TcpStream>>,
-) {
-    let listener =
-        TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
+pub async fn xge_mock() -> (tokio::process::Child, std::io::Result<TcpStream>) {
+    let mut listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
     let parent = std::env::current_exe().unwrap();
     let parent = parent.parent().unwrap().parent().unwrap();
@@ -67,12 +56,6 @@ pub fn xge_mock() -> (
         .spawn()
         .expect("could not spawn XGE client!");
 
-    (
-        client_process,
-        listener
-            .incoming()
-            .take(1)
-            .collect::<Vec<_>>()
-            .map(|mut v| v.remove(0)),
-    )
+    let incoming = listener.accept().await.map(|r| r.0);
+    (client_process, incoming)
 }
