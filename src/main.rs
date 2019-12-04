@@ -28,7 +28,7 @@ struct Args {
     #[structopt(long)]
     output_dir: Option<String>,
 
-    /// specifies the type of your build (like dev-releaseunicode, quickstart or cmake)
+    /// specifies the type of your build (like dev-windows, quickstart or cmake-windows)
     #[structopt(long)]
     build_type: Option<String>,
 
@@ -248,6 +248,7 @@ pub struct AppWithTests {
 #[derive(Debug)]
 struct GroupWithTests {
     test_group: config::TestGroup,
+    command: config::CommandTemplate,
     test_ids: Vec<TestId>,
     test_filter: Option<String>,
 }
@@ -297,6 +298,7 @@ fn generate_app_tests(
                             };
                             GroupWithTests {
                                 test_group: test_group.clone(),
+                                command: preset_config.command.clone(),
                                 test_ids: test_group
                                     .generate_test_inputs(&app, &preset_config, &input_paths)
                                     .into_iter()

@@ -33,7 +33,7 @@ pub fn create_run_commands<'a>(
                         rel_path: None,
                     };
                     let (_input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
-                    Some(gtest_command_generator(&app.app.command, &test_filter, cwd))
+                    Some(gtest_command_generator(&group.command, &test_filter, cwd))
                 }
                 None => None,
             };
@@ -42,7 +42,7 @@ pub fn create_run_commands<'a>(
             for test_id in &group.test_ids {
                 let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
                 let generator = test_command_generator(
-                    &app.app.command,
+                    &group.command,
                     &input_str,
                     cwd,
                     output_paths.tmp_dir.clone(),

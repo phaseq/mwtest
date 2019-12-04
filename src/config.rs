@@ -56,19 +56,19 @@ impl AppsConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
-    pub command: CommandTemplate,
-    pub responsible: String, // TODO
-    pub alias: Option<Vec<String>>,
-    pub tags: Option<Vec<String>>,
-    pub accepted_returncodes: Option<Vec<u32>>, // TODO
+    command: CommandTemplate,
+    responsible: String,
+    alias: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+    accepted_returncodes: Option<Vec<u32>>, // TODO
     #[serde(default)]
-    pub disabled: bool,   // TODO
-    pub builds: HashMap<String, BuildConfig>,
-    pub tests: HashMap<String, TestPresetConfig>,
+    disabled: bool,
+    builds: HashMap<String, BuildConfig>,
+    tests: HashMap<String, TestPresetConfig>,
     #[serde(default)]
-    pub globber_matches_parent: bool,
+    globber_matches_parent: bool,
     #[serde(default)]
-    pub checkout_parent: bool, // TODO
+    checkout_parent: bool, // TODO
 }
 impl AppConfig {
     fn select_build_and_preset(
@@ -114,16 +114,15 @@ pub struct Apps(pub HashMap<String, App>);
 
 #[derive(Debug, Clone)]
 pub struct App {
-    pub command: CommandTemplate,
     pub responsible: String,
     pub build: Build,
-    pub tests: Vec<TestPresetConfig>,
+    pub tests: Vec<TestPreset>,
     pub globber_matches_parent: bool,
 }
 impl App {
     fn from(
         input_paths: &InputPaths,
-        mut command: CommandTemplate,
+        command: CommandTemplate,
         responsible: String,
         build: Build,
         tests: Vec<TestPresetConfig>,
@@ -133,20 +132,30 @@ impl App {
             ("{{exe}}", Some(&build.exe)),
             ("{{dll}}", build.dll.as_ref()),
         ];
-        for (p, r) in patterns.iter() {
-            if command.has_pattern(p) {
-                match r {
-                    Some(r) => command = command.apply(p, r),
-                    None => {
-                        println!("Please specify {}", p);
-                        std::process::exit(-1);
+        let tests = tests
+            .into_iter()
+            .map(|p| {
+                let mut command = p.command.unwrap_or_else(|| command.clone());
+                for (p, r) in patterns.iter() {
+                    if command.has_pattern(p) {
+                        match r {
+                            Some(r) => command = command.apply(p, r),
+                            None => {
+                                println!("Please specify {}", p);
+                                std::process::exit(-1);
+                            }
+                        }
                     }
                 }
-            }
-        }
-        command = command.apply_input_paths(input_paths);
+                command = command.apply_input_paths(input_paths);
+                TestPreset {
+                    command,
+                    id_pattern: p.id_pattern,
+                    groups: p.groups,
+                }
+            })
+            .collect();
         App {
-            command,
             responsible,
             build,
             tests,
@@ -206,7 +215,15 @@ impl Build {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct TestPresetConfig {
+struct TestPresetConfig {
+    pub command: Option<CommandTemplate>,
+    pub id_pattern: Option<String>,
+    pub groups: Vec<TestGroup>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestPreset {
+    pub command: CommandTemplate,
     pub id_pattern: Option<String>,
     pub groups: Vec<TestGroup>,
 }
@@ -228,7 +245,7 @@ impl TestGroup {
     pub fn generate_test_inputs(
         &self,
         app: &App,
-        preset: &TestPresetConfig,
+        preset: &TestPreset,
         input_paths: &InputPaths,
     ) -> Vec<crate::TestId> {
         if self.find_glob.is_some() {
@@ -238,7 +255,7 @@ impl TestGroup {
             };
             self.generate_path_inputs(&app, id_pattern, &input_paths)
         } else if self.find_gtest.is_some() {
-            self.generate_gtest_inputs(&app)
+            self.generate_gtest_inputs(&app, &preset)
         } else {
             panic!("no test generator defined!");
         }
@@ -292,7 +309,7 @@ impl TestGroup {
             })
             .collect()
     }
-    fn generate_gtest_inputs(&self, app: &App) -> Vec<crate::TestId> {
+    fn generate_gtest_inputs(&self, app: &App, preset: &TestPreset) -> Vec<crate::TestId> {
         let filter = self.find_gtest.clone().unwrap();
         let exe = &app.build.exe;
         if !PathBuf::from(exe).exists() {
@@ -302,7 +319,7 @@ impl TestGroup {
             );
             std::process::exit(-1);
         }
-        let args = app.command.clone().apply("{{input}}", &filter);
+        let args = preset.command.clone().apply("{{input}}", &filter);
         let args = &args.0[1..];
         let cwd = app.build.cwd.as_ref().map(|s| s.as_ref()).unwrap_or(".");
         let output = std::process::Command::new(exe)
