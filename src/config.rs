@@ -165,14 +165,14 @@ impl App {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct BuildConfig {
-    pub exe: Option<String>,
-    pub dll: Option<String>,
-    pub cwd: Option<String>,
-    pub solution: Option<String>,
-    pub project: Option<String>,
+struct BuildConfig {
+    exe: Option<String>,
+    dll: Option<String>,
+    cwd: Option<String>,
+    solution: Option<String>,
+    project: Option<String>,
     #[serde(default)]
-    pub disabled: bool,
+    disabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -216,9 +216,9 @@ impl Build {
 
 #[derive(Debug, Deserialize, Clone)]
 struct TestPresetConfig {
-    pub command: Option<CommandTemplate>,
-    pub id_pattern: Option<String>,
-    pub groups: Vec<TestGroup>,
+    command: Option<CommandTemplate>,
+    id_pattern: Option<String>,
+    groups: Vec<TestGroup>,
 }
 
 #[derive(Debug, Clone)]
