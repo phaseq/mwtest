@@ -268,12 +268,20 @@ impl TestGroup {
         input_paths: &InputPaths,
     ) -> Vec<crate::TestId> {
         let re = regex::Regex::new(&id_pattern).unwrap();
-        let abs_path = input_paths
+        // the glob module can't handle Windows' extended path syntax
+        let root_path = input_paths
             .testcases_dir
-            .join(self.find_glob.clone().unwrap())
             .to_str()
             .unwrap()
-            .to_string();
+            .to_string()
+            .replace("\\\\?\\", "");
+        let abs_path = input_paths
+            .testcases_dir
+            .join(self.find_glob.clone().unwrap().replace('/', "\\"))
+            .to_str()
+            .unwrap()
+            .to_string()
+            .replace("\\\\?\\", "");
         glob::glob(&abs_path)
             .expect("failed to read glob pattern!")
             .map(Result::unwrap)
@@ -285,7 +293,7 @@ impl TestGroup {
                 }
             })
             .map(|p| {
-                p.strip_prefix(&input_paths.testcases_dir)
+                p.strip_prefix(&root_path)
                     .unwrap()
                     .to_str()
                     .unwrap()
@@ -450,30 +458,35 @@ impl InputPaths {
                 build_type = None;
             }
         }
-        let dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
-        let build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
+        let dev_dir = given_dev_dir
+            .map(PathBuf::from)
+            .or(dev_dir)
+            .map(|p| std::fs::canonicalize(p).unwrap());
+        let build_dir = given_build_dir
+            .map(PathBuf::from)
+            .or(build_dir)
+            .map(|p| std::fs::canonicalize(p).unwrap());
         let build_type = given_build_type.or_else(|| build_type.map(|s| s.to_string()));
 
-        let testcases_dir: PathBuf;
-        let preset: &str;
-        match InputPaths::guess_testcases_layout() {
-            TestcasesLayout::Testcases(path) => {
-                testcases_dir = path;
-                preset = "ci";
-            }
-            TestcasesLayout::Custom(path) => {
-                testcases_dir = path;
-                preset = "custom";
-            }
-        }
         let testcases_dir = given_testcases_dir
             .map(PathBuf::from)
-            .unwrap_or(testcases_dir);
-        let preset = given_preset.unwrap_or_else(|| preset.to_string());
-        if !testcases_dir.exists() {
-            println!("Could not determine build-dir! You may have to specify it explicitly!");
-            std::process::exit(-1);
-        }
+            .or_else(|| InputPaths::guess_testcases_layout(&build_dir))
+            .map(|p| std::fs::canonicalize(p).unwrap());
+
+        let preset = given_preset.unwrap_or_else(|| "ci".to_string());
+
+        let testcases_dir = match testcases_dir {
+            Some(t) if t.exists() => t,
+            _ => {
+                println!("Could not determine build-dir! You may have to specify it explicitly!");
+                std::process::exit(-1);
+            }
+        };
+
+        // println!("dev_dir: {:?}", dev_dir);
+        // println!("build_dir: {:?}", build_dir);
+        // println!("build_type: {:?}", build_type);
+        // println!("testcases_dir: {:?}", testcases_dir);
 
         let build_config = given_build_config.unwrap_or_else(|| "RelWithDebInfo".to_string());
 
@@ -518,14 +531,16 @@ impl InputPaths {
         }
     }
 
-    fn guess_testcases_layout() -> TestcasesLayout {
-        if let Some(dev_root) = InputPaths::find_dev_root() {
-            let path = dev_root.join("testcases");
-            if path.exists() {
-                return TestcasesLayout::Testcases(path);
-            }
+    fn guess_testcases_layout(build_dir: &Option<PathBuf>) -> Option<PathBuf> {
+        let guessed_path = match build_dir {
+            Some(build_dir) => build_dir.parent()?.join("testcases"),
+            None => PathBuf::from("..").join("testcases"),
+        };
+        if guessed_path.exists() {
+            Some(guessed_path)
+        } else {
+            None
         }
-        TestcasesLayout::Custom(std::env::current_dir().unwrap())
     }
 
     fn find_cmake_layout() -> Option<BuildType> {
@@ -538,7 +553,7 @@ impl InputPaths {
                 }
                 if let Some(dev_path) = line.split("mwBuildAll_SOURCE_DIR:STATIC=").nth(1) {
                     return Some(BuildType::CMake(
-                        PathBuf::from("."),
+                        std::env::current_dir().unwrap(),
                         PathBuf::from(dev_path.trim()),
                     ));
                 }
@@ -577,9 +592,4 @@ enum BuildType {
     CMake(PathBuf, PathBuf),
     Quickstart(PathBuf),
     None,
-}
-
-enum TestcasesLayout {
-    Testcases(PathBuf),
-    Custom(PathBuf),
 }
