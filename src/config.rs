@@ -475,7 +475,7 @@ impl InputPaths {
             std::process::exit(-1);
         }
 
-        let build_config = given_build_config.unwrap_or_else(|| "ReleaseUnicode".to_string());
+        let build_config = given_build_config.unwrap_or_else(|| "RelWithDebInfo".to_string());
 
         InputPaths {
             dev_dir,
@@ -497,6 +497,7 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
+        //let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
         if root.join("apps.json").exists() {
             root
         } else {

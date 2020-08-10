@@ -573,8 +573,14 @@ mod tests {
     fn count_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
         let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CountingReport::new()));
-        let success =
-            runtime.block_on(async { run_local(tests, &run_config, report.clone()).await });
+        let success = runtime.block_on(async {
+            /*let ctrl_c = tokio::signal::ctrl_c();
+            select! {
+                _ = ctrl_c => false,
+                success = run_local(tests, &run_config, report.clone()) => success,
+            }*/
+            run_local(tests, &run_config, report.clone()).await
+        });
         let count = report.lock().unwrap().count;
         (success, count)
     }

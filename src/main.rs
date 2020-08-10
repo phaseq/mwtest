@@ -100,7 +100,7 @@ fn main() {
     match args.cmd {
         SubCommands::Build { app_names } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-            cmd_build(&apps);
+            cmd_build(&apps, &input_paths);
             std::process::exit(0);
         }
         SubCommands::List { app_names, filter } => {
@@ -160,7 +160,7 @@ fn main() {
     }
 }
 
-fn cmd_build(apps: &config::Apps) {
+fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) {
     let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
     for (name, app) in apps.0.iter() {
         let build = &app.build;
@@ -173,20 +173,39 @@ fn cmd_build(apps: &config::Apps) {
             .or_insert_with(Vec::new);
         (*deps).push(build.project.as_ref().unwrap());
     }
+    let has_buildconsole = match Command::new("buildConsole").spawn() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        _ => true,
+    };
     for (solution, projects) in dependencies {
         let projects = projects.join(",");
-        println!("building:\n  solution: {}\n  {}", &solution, &projects);
-        Command::new("buildConsole")
-            .arg(solution)
-            .arg("/build")
-            .arg("/silent")
-            .arg("/cfg=ReleaseUnicode|x64")
-            .arg(format!("/prj={}", projects))
-            .arg("/openmonitor")
-            .spawn()
-            .expect("failed to launch buildConsole!")
-            .wait()
-            .expect("failed to build project!");
+        if has_buildconsole {
+            println!("building:\n  solution: {}\n  {}", &solution, &projects);
+            Command::new("buildConsole")
+                .arg(solution)
+                .arg("/build")
+                .arg("/silent")
+                .arg(format!("/cfg={}|x64", paths.build_config))
+                .arg(format!("/prj={}", projects))
+                .arg("/openmonitor")
+                .spawn()
+                .expect("failed to launch buildConsole!")
+                .wait()
+                .expect("failed to build project!");
+        } else {
+            println!("building:\n  projects: {}", &projects);
+            Command::new("cmake")
+                .arg("--build")
+                .arg(paths.build_dir.as_ref().unwrap())
+                .arg("--config")
+                .arg(&paths.build_config)
+                .arg("--target")
+                .arg(&projects)
+                .spawn()
+                .expect("failed to launch cmake --build!")
+                .wait()
+                .expect("failed to build project!");
+        }
     }
 }
 

@@ -49,13 +49,8 @@ impl Reportable for Report {
         test_result: &scheduler::TestCommandResult,
     ) {
         self.i += 1;
-        self.std_out.add(
-            self.i,
-            self.n,
-            app_name,
-            &test_instance.test_id.id,
-            &test_result,
-        );
+        self.std_out
+            .add(self.i, self.n, app_name, &test_instance, &test_result);
         self.file_logger.add(app_name, &test_result.stdout);
         self.xml_report.add(app_name, test_instance, &test_result);
     }
@@ -269,9 +264,11 @@ impl CliLogger {
         i: usize,
         n: usize,
         name: &str,
-        id: &str,
+        test_instance: &runnable::TestInstance,
         result: &scheduler::TestCommandResult,
     ) {
+        let id = &test_instance.test_id.id;
+
         // generate progress message
         let ok_or_failed = if result.exit_code == 0 {
             "Ok"
@@ -286,6 +283,11 @@ impl CliLogger {
             print!("\r{:width$}", line, width = width);
         } else {
             println!("{}", line);
+        }
+
+        if self.verbose {
+            println!("command: {:?}", test_instance.command.command);
+            println!("cwd: {:?}", test_instance.command.cwd);
         }
 
         // print full test output if requested
