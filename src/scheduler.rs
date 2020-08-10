@@ -9,7 +9,6 @@ use futures::prelude::*;
 use futures::select;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio::io::AsyncBufReadExt;
 use tokio::prelude::*;
 use tokio::process::Command;
 
@@ -196,9 +195,9 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
     };
 
     let mut stdout_reader =
-        tokio::io::BufReader::new(child.stdout().take().expect("Failed to open StdOut"));
+        tokio::io::BufReader::new(child.stdout.take().expect("Failed to open StdOut"));
     let mut stderr_reader =
-        tokio::io::BufReader::new(child.stderr().take().expect("Failed to open StdErr"));
+        tokio::io::BufReader::new(child.stderr.take().expect("Failed to open StdErr"));
 
     let mut current_test = None;
     let mut current_output = String::new();
@@ -299,7 +298,7 @@ async fn run_xge(
         (c, Box::new(s.expect("remote client failed to connect")))
     };
     let mut reader =
-        tokio::io::BufReader::new(child.stdout().take().expect("failed to connect to stdout"))
+        tokio::io::BufReader::new(child.stdout.take().expect("failed to connect to stdout"))
             .lines();
     let (repeat, repeat_if_failed) = match run_config.repeat {
         RepeatStrategy::Repeat(repeat) => (repeat, 0),
@@ -400,7 +399,7 @@ impl TestQueue {
                     id: send_idx as u64,
                     title: instance.test_id.id.clone(),
                     cwd: instance.command.cwd.clone(),
-                    command: instance.command.command.clone(),
+                    command: instance.command.command,
                     local: !group.can_use_xge(),
                 })
             }
@@ -414,10 +413,8 @@ impl TestQueue {
         repeat_if_failed: usize,
     ) -> (Arc<TestGroup>, TestInstance, bool) {
         self.in_flight -= 1;
-        if !success {
-            if self.creators[id].2.len() <= repeat_if_failed {
-                self.indices.push_back(id);
-            }
+        if !success && self.creators[id].2.len() <= repeat_if_failed {
+            self.indices.push_back(id);
         }
         (
             self.creators[id].0.clone(),
@@ -800,7 +797,7 @@ Some prefix
     #[test]
     fn test_run_local_out_of_order() {
         let tests = [0.1f32, 0.001f32, 0.05f32]
-            .into_iter()
+            .iter()
             .map(|t| make_sleep_instance(Some(*t)))
             .collect();
 

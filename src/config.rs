@@ -469,9 +469,7 @@ impl InputPaths {
         let testcases_dir = given_testcases_dir
             .map(PathBuf::from)
             .unwrap_or(testcases_dir);
-        let preset = given_preset
-            .unwrap_or_else(|| preset.to_string())
-            .to_string();
+        let preset = given_preset.unwrap_or_else(|| preset.to_string());
         if !testcases_dir.exists() {
             println!("Could not determine build-dir! You may have to specify it explicitly!");
             std::process::exit(-1);
@@ -483,7 +481,7 @@ impl InputPaths {
             dev_dir,
             build_dir,
             testcases_dir,
-            build_type: build_type.map(|s| s.to_string()),
+            build_type,
             preset,
             build_config,
         }

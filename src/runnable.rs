@@ -3,9 +3,9 @@ use crate::TestId;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-pub fn create_run_commands<'a>(
+pub fn create_run_commands(
     input_paths: &config::InputPaths,
-    test_apps: &'a [crate::AppWithTests],
+    test_apps: &[crate::AppWithTests],
     output_paths: &crate::OutputPaths,
     no_timeout: bool,
 ) -> Vec<TestGroup> {
@@ -183,7 +183,7 @@ fn test_command_generator(
             let command = command.apply("{{out_dir}}", &tmp_path);
             std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
             TestCommand {
-                command: command.0.clone(),
+                command: command.0,
                 cwd: cwd.to_string(),
                 tmp_path: Some(tmp_dir),
             }
@@ -194,7 +194,7 @@ fn test_command_generator(
             let tmp_path = tmp_dir.to_str().unwrap().to_string();
             let command = command.apply("{{out_file}}", &tmp_path);
             TestCommand {
-                command: command.0.clone(),
+                command: command.0,
                 cwd: cwd.to_string(),
                 tmp_path: Some(tmp_dir),
             }
