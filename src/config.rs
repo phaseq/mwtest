@@ -269,19 +269,12 @@ impl TestGroup {
     ) -> Vec<crate::TestId> {
         let re = regex::Regex::new(&id_pattern).unwrap();
         // the glob module can't handle Windows' extended path syntax
-        let root_path = input_paths
-            .testcases_dir
-            .to_str()
-            .unwrap()
-            .to_string()
-            .replace("\\\\?\\", "");
         let abs_path = input_paths
             .testcases_dir
             .join(self.find_glob.clone().unwrap().replace('/', "\\"))
             .to_str()
             .unwrap()
-            .to_string()
-            .replace("\\\\?\\", "");
+            .to_string();
         glob::glob(&abs_path)
             .expect("failed to read glob pattern!")
             .map(Result::unwrap)
@@ -293,7 +286,7 @@ impl TestGroup {
                 }
             })
             .map(|p| {
-                p.strip_prefix(&root_path)
+                p.strip_prefix(&input_paths.testcases_dir)
                     .unwrap()
                     .to_str()
                     .unwrap()
@@ -458,20 +451,13 @@ impl InputPaths {
                 build_type = None;
             }
         }
-        let dev_dir = given_dev_dir
-            .map(PathBuf::from)
-            .or(dev_dir)
-            .map(|p| std::fs::canonicalize(p).unwrap());
-        let build_dir = given_build_dir
-            .map(PathBuf::from)
-            .or(build_dir)
-            .map(|p| std::fs::canonicalize(p).unwrap());
+        let dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
+        let build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
         let build_type = given_build_type.or_else(|| build_type.map(|s| s.to_string()));
 
         let testcases_dir = given_testcases_dir
             .map(PathBuf::from)
-            .or_else(|| InputPaths::guess_testcases_layout(&build_dir))
-            .map(|p| std::fs::canonicalize(p).unwrap());
+            .or_else(|| InputPaths::guess_testcases_layout(&build_dir));
 
         let preset = given_preset.unwrap_or_else(|| "ci".to_string());
 
