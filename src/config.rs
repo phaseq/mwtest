@@ -6,6 +6,81 @@ use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct AppsConfig(pub HashMap<String, AppConfig>);
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AppConfig {
+    command: CommandTemplate,
+    responsible: String,
+    alias: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+    accepted_returncodes: Option<Vec<u32>>, // TODO
+    #[serde(default)]
+    disabled: bool,
+    builds: HashMap<String, BuildConfig>,
+    tests: HashMap<String, TestPresetConfig>,
+    #[serde(default)]
+    globber_matches_parent: bool,
+    #[serde(default)]
+    checkout_parent: bool, // TODO
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct BuildConfig {
+    exe: Option<String>,
+    dll: Option<String>,
+    cwd: Option<String>,
+    solution: Option<String>,
+    project: Option<String>,
+    #[serde(default)]
+    disabled: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TestPresetConfig {
+    command: Option<CommandTemplate>,
+    id_pattern: Option<String>,
+    groups: Vec<TestGroup>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CommandTemplate(pub Vec<String>);
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TestGroup {
+    pub find_glob: Option<String>,
+    pub find_gtest: Option<String>,
+    pub timeout: Option<f32>,
+    #[serde(default = "value_xge")]
+    pub execution_style: String,
+}
+
+#[derive(Debug)]
+pub struct Apps(pub HashMap<String, App>);
+
+#[derive(Debug, Clone)]
+pub struct App {
+    pub responsible: String,
+    pub build: Build,
+    pub tests: Vec<TestPreset>,
+    pub globber_matches_parent: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Build {
+    pub exe: String,
+    pub dll: Option<String>,
+    pub cwd: Option<String>,
+    pub solution: Option<String>,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestPreset {
+    pub command: CommandTemplate,
+    pub id_pattern: Option<String>,
+    pub groups: Vec<TestGroup>,
+}
+
 impl AppsConfig {
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(serde_json::from_reader(File::open(
@@ -24,52 +99,36 @@ impl AppsConfig {
         app_names: &[String],
         input_paths: &InputPaths,
     ) -> Apps {
-        Apps(
-            self.0
-                .into_iter()
-                .filter(|(name, config)| {
-                    app_names.iter().any(|n| {
-                        let n = n.to_lowercase();
-                        n == name.to_lowercase()
-                            || n == "all"
-                            || config
-                                .alias
-                                .as_ref()
-                                .map(|aliases| aliases.iter().any(|a| a.to_lowercase() == n))
-                                .unwrap_or(false)
-                            || config
-                                .tags
-                                .as_ref()
-                                .map(|tags| tags.iter().any(|t| t.to_lowercase() == n))
-                                .unwrap_or(false)
-                    })
-                })
-                .filter_map(|(name, config)| {
-                    config
-                        .select_build_and_preset(&name, input_paths)
-                        .map(|app| (name, app))
-                })
-                .collect(),
-        )
+        let selected_app_configs = self.0.into_iter().filter(|(name, config)| {
+            app_names.iter().any(|n| {
+                let n = n.to_lowercase();
+                n == name.to_lowercase()
+                    || n == "all"
+                    || config
+                        .alias
+                        .as_ref()
+                        .map(|aliases| aliases.iter().any(|a| a.to_lowercase() == n))
+                        .unwrap_or(false)
+                    || config
+                        .tags
+                        .as_ref()
+                        .map(|tags| tags.iter().any(|t| t.to_lowercase() == n))
+                        .unwrap_or(false)
+            })
+        });
+
+        let apps = selected_app_configs
+            .filter_map(|(name, config)| {
+                config
+                    .select_build_and_preset(&name, input_paths)
+                    .map(|app| (name, app))
+            })
+            .collect();
+
+        Apps(apps)
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct AppConfig {
-    command: CommandTemplate,
-    responsible: String,
-    alias: Option<Vec<String>>,
-    tags: Option<Vec<String>>,
-    accepted_returncodes: Option<Vec<u32>>, // TODO
-    #[serde(default)]
-    disabled: bool,
-    builds: HashMap<String, BuildConfig>,
-    tests: HashMap<String, TestPresetConfig>,
-    #[serde(default)]
-    globber_matches_parent: bool,
-    #[serde(default)]
-    checkout_parent: bool, // TODO
-}
 impl AppConfig {
     fn select_build_and_preset(
         mut self: Self,
@@ -109,16 +168,6 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug)]
-pub struct Apps(pub HashMap<String, App>);
-
-#[derive(Debug, Clone)]
-pub struct App {
-    pub responsible: String,
-    pub build: Build,
-    pub tests: Vec<TestPreset>,
-    pub globber_matches_parent: bool,
-}
 impl App {
     fn from(
         input_paths: &InputPaths,
@@ -164,25 +213,6 @@ impl App {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-struct BuildConfig {
-    exe: Option<String>,
-    dll: Option<String>,
-    cwd: Option<String>,
-    solution: Option<String>,
-    project: Option<String>,
-    #[serde(default)]
-    disabled: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct Build {
-    pub exe: String,
-    pub dll: Option<String>,
-    pub cwd: Option<String>,
-    pub solution: Option<String>,
-    pub project: Option<String>,
-}
 impl Build {
     fn from(build: &BuildConfig, input_paths: &InputPaths) -> Build {
         let exe = Build::apply_config_string(&build.exe, &input_paths).unwrap();
@@ -212,29 +242,6 @@ impl Build {
             None => None,
         }
     }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct TestPresetConfig {
-    command: Option<CommandTemplate>,
-    id_pattern: Option<String>,
-    groups: Vec<TestGroup>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TestPreset {
-    pub command: CommandTemplate,
-    pub id_pattern: Option<String>,
-    pub groups: Vec<TestGroup>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct TestGroup {
-    pub find_glob: Option<String>,
-    pub find_gtest: Option<String>,
-    pub timeout: Option<f32>,
-    #[serde(default = "value_xge")]
-    pub execution_style: String,
 }
 
 fn value_xge() -> String {
@@ -356,8 +363,6 @@ impl TestGroup {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct CommandTemplate(pub Vec<String>);
 impl CommandTemplate {
     pub fn apply(&self, from: &str, to: &str) -> CommandTemplate {
         CommandTemplate(

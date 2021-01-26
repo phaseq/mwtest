@@ -6,16 +6,9 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/cadcam/cadcamGUnitTests/{{build_config}}/cadcamGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/cadcam/cadcamGUnitTests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "cadcamGUnitTests"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/cadcamGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/cadcam/cadcamGUnitTests",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
+        "cwd": "{{testcases_dir}}/libraries/cadcam/cadcamGUnitTests",
         "project": "cadcamGUnitTests"
       }
     },
@@ -25,7 +18,10 @@
           {
             "find_gtest": "*",
             "timeout": 120,
-            "execution_style": "singlethreaded"
+            "execution_style": "singlethreaded",
+            "testcases_dependencies": [
+              "libraries/cadcam"
+            ]
           }
         ]
       }
@@ -38,11 +34,10 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/collision/collCore/collCoreUnitTests/x64/{{build_config_skipunicode}}/collCoreTest.exe",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/collCoreGUnitTests.exe",
         "cwd": "{{dev_dir}}/libraries/collision/collCore/collCoreUnitTests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "collCoreTest"
+        "project": "collCoreGUnitTests"
       }
     },
     "tests": {
@@ -63,21 +58,15 @@
       "--input-dir",
       "{{input}}",
       "--output-dir",
-      "{{out_dir}}"
+      "{{generate_output_dir}}"
     ],
-    "responsible": "MachSim Team",
+    "responsible": "CollisionChecker Team",
     "tags": [
       "machsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/CollisionCheckerTest/{{build_config}}/CollisionCheckerTest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "CollisionCheckerTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/CollisionCheckerTest.exe",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "CollisionCheckerTest"
       },
       "quickstart": {
@@ -118,18 +107,12 @@
       "{{exe}}",
       "--gtest-filter={{input}}"
     ],
-    "responsible": "MachSim Team",
+    "responsible": "CollisionChecker Team",
+    "supports_gtest_batching": false,
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/mwMSimCollisionCheckerUnitTests/{{build_config}}/mwMSimCollisionCheckerUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/mwMSimCollisionCheckerUnitTests/",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwMSimCollisionCheckerUnitTests"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwMSimCollisionCheckerUnitTests.exe",
         "cwd": "{{dev_dir}}/libraries/mwMSimCollisionCheckerUnitTests/",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwMSimCollisionCheckerUnitTests"
       }
     },
@@ -151,11 +134,10 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/collision/collMap/tests/{{build_config}}/collMapGUnitTests.exe",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/collMapTests.exe",
         "cwd": "{{dev_dir}}/libraries/collision/collMap/tests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "collMapGUnitTests"
+        "project": "collMapTests"
       }
     },
     "tests": {
@@ -179,16 +161,9 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/confspace/confspaceGUnitTests/{{build_config}}/confspaceGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/confspace/confspaceGUnitTests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "confspaceGUnitTests"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/confspaceGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/confspace/confspaceGUnitTests",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
+        "cwd": "{{testcases_dir}}/libraries/confspace/confspaceGUnitTests",
         "project": "confspaceGUnitTests"
       }
     },
@@ -197,7 +172,10 @@
         "groups": [
           {
             "find_gtest": "*",
-            "timeout": 120
+            "timeout": 120,
+            "testcases_dependencies": [
+              "libraries/confspace"
+            ]
           }
         ]
       }
@@ -210,16 +188,16 @@
       "--input-dir",
       "{{input}}",
       "--output-dir",
-      "{{out_dir}}"
+      "{{generate_output_dir}}"
     ],
-    "responsible": "MachSim Team",
+    "responsible": "CutterCompensation Team",
     "tags": [
       "machsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/mwCutterCompensationTest/{{build_config}}/mwCutterCompensationTest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwCutterCompensationTest.exe",
+        "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
         "project": "mwCutterCompensationTest"
       },
       "quickstart": {
@@ -246,13 +224,60 @@
       }
     }
   },
+  "eoUnit": {
+    "command": [
+      "python3",
+      "{{dev_dir}}/5axis/test/exactoutputBT/UnitTests/eo_tests.py",
+      "--ci",
+      "--build_dir",
+      "{{exe}}"
+    ],
+    "responsible": "3Axis Team",
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}",
+        "project": "exactoutputBT"
+      },
+      "quickstart": {
+        "exe": "{{build_dir}}",
+        "cwd": "{{build_dir}}"
+      }
+    },
+    "tests": {
+      "ci": {
+        "groups": [
+          {
+            "input_strings": [
+              "ci"
+            ],
+            "timeout": 240
+          }
+        ]
+      },
+      "custom": {
+        "command": [
+          "python3",
+          "{{dev_dir}}/5axis/test/exactoutputBT/UnitTests/eo_tests.py",
+          "--build_dir",
+          "{{exe}}"
+        ],
+        "groups": [
+          {
+            "input_strings": [
+              "all"
+            ],
+            "timeout": 240
+          }
+        ]
+      }
+    }
+  },
   "exactoutput": {
     "command": [
       "{{exe}}",
       "-binFile:{{input}}",
-      "-outFile:{{out_file}}",
-      "-jsonFile:{{out_file}}.json",
-      "-iAmDebugging:1",
+      "-outFile:{{generate_output_path}}",
+      "-jsonFile:{{generate_output_path}}.json",
       "-onScreen:0",
       "-ompThreadsPerBin:4",
       "-softTimeout:0",
@@ -263,19 +288,157 @@
       "eo"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/exactoutputBT/{{build_config}}/exactoutputBT.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "exactoutputBT"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/exactoutputBT.exe",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "exactoutputBT"
       },
       "quickstart": {
         "exe": "{{build_dir}}/exactoutputBT.exe",
         "cwd": "{{build_dir}}"
+      },
+      "cmake-linux": {
+        "exe": "{{build_dir}}/Binaries/build/exactoutputBT",
+        "cwd": "{{build_dir}}/Binaries/build",
+        "project": "exactoutputBT"
+      },
+      "quickstart-linux": {
+        "exe": "{{build_dir}}/exactoutputBT",
+        "cwd": "{{build_dir}}"
+      }
+    },
+    "tests": {
+      "ci": {
+        "id_pattern": "5axis/(.*).bin",
+        "groups": [
+          {
+            "find_glob": "5axis/binfiles/**/*.bin",
+            "timeout": 120,
+            "timeout_if_changed": 80
+          },
+          {
+            "find_glob": "5axis/samples/**/*.bin",
+            "timeout": 120,
+            "timeout_if_changed": 80
+          }
+        ]
+      },
+      "nightly": {
+        "id_pattern": "5axis/nightly/(.*).bin",
+        "groups": [
+          {
+            "find_glob": "5axis/nightly/**/*.bin",
+            "timeout": 120
+          }
+        ]
+      },
+      "custom": {
+        "id_pattern": "(.*).bin",
+        "groups": [
+          {
+            "find_glob": "**/*.bin"
+          }
+        ]
+      }
+    }
+  },
+  "exactoutput_iscancel": {
+    "command": [
+      "{{exe}}",
+      "-binFile:{{input}}",
+      "-jsonFile:{{generate_output_path}}.json",
+      "-onScreen:0",
+      "-ompThreadsPerBin:1",
+      "-softTimeout:0",
+      "-isCancelInUHTimeTresholdSec:10",
+      "-checkIsCancelInUH:1",
+      "-isCiMode",
+      "-excTest"
+    ],
+    "responsible": "3Axis Team",
+    "alias": [
+      "eo_iscancel"
+    ],
+    "accepted_returncodes": [
+      0,
+      1,
+      2,
+      3,
+      7,
+      10
+    ],
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/exactoutputBT.exe",
+        "project": "exactoutputBT"
+      },
+      "quickstart": {
+        "exe": "{{build_dir}}/exactoutputBT.exe",
+        "cwd": "{{build_dir}}"
+      },
+      "cmake-linux": {
+        "exe": "{{build_dir}}/Binaries/build/exactoutputBT",
+        "cwd": "{{build_dir}}/Binaries/build",
+        "project": "exactoutputBT"
+      },
+      "quickstart-linux": {
+        "exe": "{{build_dir}}/exactoutputBT",
+        "cwd": "{{build_dir}}"
+      }
+    },
+    "tests": {
+      "ci": {
+        "id_pattern": "5axis/(.*).bin",
+        "groups": [
+          {
+            "find_glob": "5axis/binfiles/**/*.bin",
+            "timeout": 120,
+            "timeout_if_changed": 80
+          },
+          {
+            "find_glob": "5axis/samples/**/*.bin",
+            "timeout": 120,
+            "timeout_if_changed": 80
+          }
+        ]
+      },
+      "nightly": {
+        "id_pattern": "5axis/nightly/(.*).bin",
+        "groups": [
+          {
+            "find_glob": "5axis/nightly/**/*.bin",
+            "timeout": 120
+          }
+        ]
+      },
+      "custom": {
+        "id_pattern": "(.*).bin",
+        "groups": [
+          {
+            "find_glob": "**/*.bin"
+          }
+        ]
+      }
+    }
+  },
+  "eo_sidebyside": {
+    "command": [
+      "{{exe}}",
+      "-binFile:{{input}}",
+      "-outFile:{{generate_output_path}}",
+      "-jsonFile:{{generate_output_path}}.json",
+      "-onScreen:0",
+      "-ompThreadsPerBin:1",
+      "-softTimeout:0",
+      "-isCiMode"
+    ],
+    "responsible": "3Axis Team",
+    "alias": [
+      "eosxs"
+    ],
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/sxs_folder_structure_eo/SideBySideTest.exe",
+        "project": "SideBySideTest"
       }
     },
     "tests": {
@@ -308,13 +471,11 @@
       }
     }
   },
-  "sxs_exactoutput": {
+  "exactoutput_exc": {
     "command": [
       "{{exe}}",
       "-binFile:{{input}}",
-      "-outFile:{{out_file}}",
-      "-jsonFile:{{out_file}}.json",
-      "-iAmDebugging:1",
+      "-jsonFile:{{generate_output_path}}.json",
       "-onScreen:0",
       "-ompThreadsPerBin:4",
       "-softTimeout:0",
@@ -322,32 +483,58 @@
     ],
     "responsible": "3Axis Team",
     "alias": [
-      "sxseo"
+      "eoexc"
+    ],
+    "accepted_returncodes": [
+      0,
+      1,
+      2,
+      3,
+      7,
+      10, 
+      11
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/SideBySideTest/{{build_config}}/EO/SideBySideTest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "SideBySideTestEO"
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/exactoutputBT.exe",
+        "project": "exactoutputBT"
+      },
+      "quickstart": {
+        "exe": "{{build_dir}}/exactoutputBT.exe",
+        "cwd": "{{build_dir}}"
+      },
+      "cmake-linux": {
+        "exe": "{{build_dir}}/Binaries/build/exactoutputBT",
+        "cwd": "{{build_dir}}/Binaries/build",
+        "project": "exactoutputBT"
+      },
+      "quickstart-linux": {
+        "exe": "{{build_dir}}/exactoutputBT",
+        "cwd": "{{build_dir}}"
       }
     },
     "tests": {
       "ci": {
-        "id_pattern": "5axis/binfiles/(.*).bin",
+        "id_pattern": "5axis/(.*).bin",
         "groups": [
           {
             "find_glob": "5axis/binfiles/**/*.bin",
+            "timeout": 120,
+            "timeout_if_changed": 80
+          },
+          {
+            "find_glob": "5axis/samples/**/*.bin",
             "timeout": 120,
             "timeout_if_changed": 80
           }
         ]
       },
       "nightly": {
-        "id_pattern": "5axis/nightly/(.*).bin",
+        "id_pattern": "5axis/(.*).bin",
         "groups": [
           {
-            "find_glob": "5axis/nightly/**/*.bin",
-            "timeout": 120
+            "find_glob": "5axis/cparts3ax/**/*.bin",
+            "timeout": 600
           }
         ]
       },
@@ -356,58 +543,6 @@
         "groups": [
           {
             "find_glob": "**/*.bin"
-          }
-        ]
-      }
-    }
-  },
-  "exactoutput_3axis": {
-    "command": [
-      "{{exe}}",
-      "-binFile:{{input}}",
-      "-outFile:{{out_file}}",
-      "-jsonFile:{{out_file}}.json",
-      "-iAmDebugging:1",
-      "-onScreen:0",
-      "-ompThreadsPerBin:4",
-      "-softTimeout:0",
-      "-isCiMode",
-      "-excTest"
-    ],
-    "responsible": "3Axis Team",
-    "alias": [
-      "eo3ax"
-    ],
-    "accepted_returncodes": [
-      0,
-      1,
-      2,
-      3,
-      10
-    ],
-    "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/exactoutputBT/{{build_config}}/exactoutputBT.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "exactoutputBT"
-      },
-      "cmake-windows": {
-        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/exactoutputBT.exe",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
-        "project": "exactoutputBT"
-      },
-      "quickstart": {
-        "exe": "{{build_dir}}/exactoutputBT.exe",
-        "cwd": "{{build_dir}}"
-      }
-    },
-    "tests": {
-      "nightly": {
-        "id_pattern": "5axis/cparts3ax/(.*).bin",
-        "groups": [
-          {
-            "find_glob": "5axis/cparts3ax/**/*.bin",
-            "timeout": 600
           }
         ]
       }
@@ -420,10 +555,9 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/mwgeolib/mwGeoLibSerializationTest/{{build_config}}/mwGeoLibSerializationTest.exe",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwGeoLibSerializationTest.exe",
         "cwd": "{{dev_dir}}/5axis/mwgeolib/mwGeoLibSerializationTest",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
         "project": "mwGeoLibSerializationTest"
       }
     },
@@ -445,9 +579,9 @@
       "--input-dir",
       "{{input}}",
       "--output-dir",
-      "{{out_dir}}",
+      "{{generate_output_dir}}",
       "--tmp-dir",
-      "{{out_dir}}/__tmp",
+      "{{generate_output_dir}}/__tmp",
       "--stand-alone",
       "1"
     ],
@@ -457,14 +591,8 @@
       "machsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/machsimtest/{{build_config}}/machsimtest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "machsimtest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/machsimtest.exe",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "machsimtest"
       },
       "quickstart": {
@@ -476,7 +604,7 @@
         "id_pattern": "machsim/MachSimTestCases/(.*)",
         "groups": [
           {
-            "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
+            "find_parent_dir": "machsim/MachSimTestCases/BinTestInputPools/**/*.xml",
             "timeout": 300
           }
         ]
@@ -485,7 +613,7 @@
         "id_pattern": "machsim/MachSimTestCases/(.*)",
         "groups": [
           {
-            "find_glob": "machsim/MachSimTestCases/LargeInputPools/**/report.xml",
+            "find_parent_dir": "machsim/MachSimTestCases/LargeInputPools/**/*.xml",
             "timeout": 600
           }
         ]
@@ -493,7 +621,52 @@
       "custom": {
         "groups": [
           {
-            "find_glob": "**/report.xml"
+            "find_parent_dir": "**/*.xml"
+          }
+        ]
+      }
+    }
+  },
+  "machsimPerformance": {
+    "command": [
+      "{{exe}}",
+      "newmode",
+      "--input-dir",
+      "{{input}}",
+      "--output-dir",
+      "{{generate_output_dir}}",
+      "--tmp-dir",
+      "{{generate_output_dir}}/__tmp",
+      "--stand-alone",
+      "1"
+    ],
+    "globber_matches_parent": true,
+    "responsible": "MachSim Team",
+    "tags": [
+      "machsimtestsPerformance"
+    ],
+	"accepted_returncodes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/machsimtest.exe",
+        "project": "machsimtest"
+      },
+      "quickstart": {
+        "exe": "{{build_dir}}/machsimtest.exe"
+      }
+    },
+    "tests": {
+      "benchmark": {
+        "groups": [
+          {
+            "find_parent_dir": "**/*.xml"
           }
         ]
       }
@@ -506,9 +679,9 @@
       "--input-dir",
       "{{input}}",
       "--output-dir",
-      "{{out_dir}}",
+      "{{generate_output_dir}}",
       "--tmp-dir",
-      "{{out_dir}}/__tmp",
+      "{{generate_output_dir}}/__tmp",
       "--stand-alone",
       "1",
       "--use-cnc",
@@ -520,14 +693,8 @@
       "machsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/machsimtest/{{build_config}}/machsimtest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "machsimtest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/machsimtest.exe",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "machsimtest"
       },
       "quickstart": {
@@ -539,7 +706,7 @@
         "id_pattern": "machsim/MachSimTestCases/(.*)",
         "groups": [
           {
-            "find_glob": "machsim/MachSimTestCases/BinTestInputPools/**/report.xml",
+            "find_parent_dir": "machsim/MachSimTestCases/BinTestInputPools/**/*.xml",
             "exclusion_list": "machsim/MachSimTestCases/BinTestInputPools/SkipForCNCSimIntegration.txt",
             "timeout": 300
           }
@@ -549,7 +716,7 @@
         "id_pattern": "machsim/MachSimTestCases/(.*)",
         "groups": [
           {
-            "find_glob": "machsim/MachSimTestCases/LargeInputPools/**/report.xml",
+            "find_parent_dir": "machsim/MachSimTestCases/LargeInputPools/**/*.xml",
             "exclusion_list": "machsim/MachSimTestCases/LargeInputPools/SkipForCNCSimIntegration.txt",
             "timeout": 600
           }
@@ -558,7 +725,31 @@
       "custom": {
         "groups": [
           {
-            "find_glob": "**/report.xml"
+            "find_parent_dir": "**/*.xml"
+          }
+        ]
+      }
+    }
+  },
+  "mathdef": {
+    "command": [
+      "{{exe}}",
+      "--gtest_filter={{input}}"
+    ],
+    "responsible": "5Axis Team",
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/MathdefGUnitTests.exe",
+        "cwd": "{{dev_dir}}/libraries/mathdef/MathdefGUnitTests",
+        "project": "MathdefGUnitTests"
+      }
+    },
+    "tests": {
+      "ci": {
+        "groups": [
+          {
+            "find_gtest": "*",
+            "timeout": 120
           }
         ]
       }
@@ -571,20 +762,13 @@
       "--input-dir",
       "{{input}}",
       "--output-dir",
-      "{{out_dir}}"
+      "{{generate_output_dir}}"
     ],
     "responsible": "5axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/meshOffsetterTest/{{build_config}}/meshOffsetterTest.exe",
-        "cwd": "{{dev_dir}}/testcases:5axis/meshOffsetterTest/Example",
-        "solution": "{{dev_dir}}/5axis/test/meshOffsetterTest/meshOffsetterTest_VS2013.sln",
-        "project": "meshOffsetterTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/meshOffsetterTest.exe",
         "cwd": "{{testcases_dir}}/5axis/meshOffsetterTest/Example",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "meshOffsetterTest"
       }
     },
@@ -597,16 +781,9 @@
     ],
     "responsible": "5Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/meshtools/tests/{{build_config}}/meshtoolsGUnitTests.exe",
-        "cwd": "{{testcases_dir}}/libraries/meshtools",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "meshtoolsGUnitTests"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/meshtoolsGUnitTests.exe",
         "cwd": "{{testcases_dir}}/libraries/meshtools",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "meshtoolsGUnitTests"
       }
     },
@@ -642,10 +819,9 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/misc/MiscGUnitTests/{{build_config}}/miscGUnitTests.exe",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/miscGUnitTests.exe",
         "cwd": "{{dev_dir}}/libraries/misc/MiscGUnitTests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
         "project": "MiscGUnitTests"
       }
     },
@@ -664,27 +840,18 @@
     "command": [
       "{{exe}}",
       "--gtest_filter={{input}}",
-      "--test-data",
-      "{{dev_dir}}/CNCSim/MoriSeikiWrapper/MoriSeikiWrapperUnitTest/TestData",
-      "--machines-data",
-      "{{dev_dir}}/5axis/customer/quickstart/Machines"
+      "--test-data={{testcases_dir}}/cncsim/MoriSeikiWrapperUnitTest",
+      "--machines-data={{dev_dir}}/5axis/customer/quickstart/Machines"
     ],
     "responsible": "CNCSim Team",
     "tags": [
       "cncsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/CNCSim/MoriSeikiWrapper/{{build_config_skipunicode}}/MoriSeikiWrapperUnitTest_MWTestApp.exe",
-        "cwd": "{{dev_dir}}/5axis/customer/quickstart",
-        "solution": "{{dev_dir}}/CNCSim/MoriSeikiWrapper/MoriSeikiWrapper.sln",
-        "project": "MoriSeikiWrapperUnitTest",
-        "dependencies": [
-          {
-            "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-            "project": "5axBuildAll"
-          }
-        ]
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/MoriSeikiWrapperUnitTest_MWTestApp.exe",
+        "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
+        "project": "MoriSeikiWrapperUnitTest"
       },
       "cmake-linux": {
         "disabled": true
@@ -695,6 +862,9 @@
         "groups": [
           {
             "find_gtest": "*",
+            "testcases_dependencies": [
+              "cncsim/MoriSeikiWrapperUnitTest"
+            ],
             "timeout": 120
           }
         ]
@@ -705,13 +875,12 @@
     "command": [
       "{{exe}}",
       "--check",
-      "--artifacts-dir",
-      "{{out_dir}}",
       "--verbose",
-      "--files",
-      "{{input}}"
+      "--files={{input}}",
+      "--artifacts-dir={{generate_output_dir}}"
     ],
     "responsible": "CNCSim Team",
+    "checkout_parent": true,
     "alias": [
       "CNCSimTest"
     ],
@@ -719,16 +888,9 @@
       "cncsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/CNCSim/mwCNCSimTest/bin/{{build_config_skipunicode}}/mwCNCSimTest.exe",
-        "cwd": "{{dev_dir}}/5axis/customer/quickstart",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwCNCSimTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwCNCSimTest.exe",
         "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwCNCSimTest"
       },
       "cmake-linux": {
@@ -742,45 +904,44 @@
     },
     "tests": {
       "ci": {
-        "id_pattern": "cncsim/automated/smoke/(.*)",
+        "id_pattern": "cncsim/automated/(.*)",
         "groups": [
           {
             "find_glob": "cncsim/automated/smoke/**/*.cnclog",
-            "timeout": 120,
-            "execution_style": "parallel"
-          },
-          {
-            "find_glob": "cncsim/automated/smoke/**/.cnc",
-            "timeout": 120,
+            "timeout": 600,
             "execution_style": "parallel"
           }
         ]
       },
-      "ci_disabled": {
-        "id_pattern": "cncsim/(.*)",
+      "nightly": {
+        "id_pattern": "cncsim/automated/(.*)",
         "groups": [
           {
-            "find_glob": "cncsim/ReferenceFiles/GeneratedCNCFiles/**/*.cnclog",
-            "timeout": 120,
+            "find_glob": "cncsim/automated/nightly/**/*.cnclog",
+            "timeout": 3600,
             "execution_style": "parallel"
-          },
+          }
+        ]
+      },
+      "performance": {
+        "id_pattern": "cncsim/automated/(.*)",
+        "groups": [
           {
-            "find_glob": "cncsim/TestCases/**/*.cnclog",
-            "timeout": 120,
-            "execution_style": "parallel"
-          },
-          {
-            "find_glob": "cncsim/CNCSimReferenceFiles/**/*.cnclog",
-            "timeout": 120,
-            "execution_style": "parallel"
+            "find_glob": "cncsim/automated/performance/**/*.cnclog",
+            "timeout": 1200,
+            "execution_style": "singlethreaded"
           }
         ]
       },
       "custom": {
-        "id_pattern": "(.*)",
+        "id_pattern": "cncsim/automated/(.*)",
         "groups": [
           {
             "find_glob": "**/*.cnclog",
+            "execution_style": "parallel"
+          },
+          {
+            "find_glob": "**/*.cnc",
             "execution_style": "parallel"
           }
         ]
@@ -791,10 +952,9 @@
     "command": [
       "{{exe}}",
       "--gtest_filter={{input}}",
-      "--test-data",
-      "{{dev_dir}}/CNCSim/mwCNCSimUnitTest/TestData",
-      "--machines-data",
-      "{{dev_dir}}/5axis/customer/quickstart/Machines"
+      "--test-data={{testcases_dir}}/cncsim/mwCNCSimUnitTest",
+      "--machines-data={{dev_dir}}/5axis/customer/quickstart/Machines",
+      "--artifacts-dir={{output_dir}}"
     ],
     "responsible": "CNCSim Team",
     "alias": [
@@ -804,16 +964,9 @@
       "cncsimtests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/CNCSim/mwCNCSimUnitTest/bin/{{build_config_skipunicode}}/mwCNCSimUnitTest.exe",
-        "cwd": "{{dev_dir}}/5axis/customer/quickstart",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwCNCSimUnitTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwCNCSimUnitTest.exe",
         "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwCNCSimUnitTest"
       },
       "cmake-linux": {
@@ -831,7 +984,36 @@
         "groups": [
           {
             "find_gtest": "*",
-            "timeout": 180
+            "testcases_dependencies": [
+              "cncsim/mwCNCSimUnitTest"
+            ],
+            "timeout": 240,
+            "execution_style": "parallel"
+          }
+        ]
+      }
+    }
+  },
+  "mwstdTest": {
+    "command": [
+      "{{exe}}",
+      "--gtest_filter={{input}}"
+    ],
+    "responsible": "CAS Team",
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwstdTest.exe",
+        "cwd": "{{dev_dir}}/libraries/mwstd/mwstdTest",
+        "project": "mwstdTest"
+      }
+    },
+    "tests": {
+      "ci": {
+        "groups": [
+          {
+            "find_gtest": "*",
+            "timeout": 120,
+            "execution_style": "singlethreaded"
           }
         ]
       }
@@ -844,18 +1026,12 @@
       "--input-dir",
       "{{input}}",
       "--output-dir",
-      "{{out_dir}}"
+      "{{generate_output_dir}}"
     ],
-    "responsible": "MachSim Team",
+    "responsible": "MultiXPost Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/MXPTest/{{build_config}}/MXPTest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "MXPTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/MXPTest.exe",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "MXPTest"
       },
       "quickstart": {
@@ -886,14 +1062,13 @@
   "mxpUnit": {
     "command": [
       "{{exe}}",
-      "--gtest-filter",
-      "{{input}}"
+      "--gtest-filter={{input}}"
     ],
-    "responsible": "MachSim Team",
+    "responsible": "MultiXPost Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/MXPUnitTest/{{build_config}}/MXPUnitTest.exe",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/MXPUnitTest.exe",
+        "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
         "project": "MXPUnitTest"
       }
     },
@@ -911,54 +1086,61 @@
   "mwNGSPTest": {
     "command": [
       "{{exe}}",
+      "--runtime_data_dir={{dev_dir}}/ShopFloorProgramming/mwNGSPTest/runtime_data",
+      "--regression_tests_dir={{testcases_dir}}/ShopFloorProgramming/mwNGSPTest/RegressionTestJobs",
       "--gtest_filter={{input}}",
-      "--regression_tests_folder",
-      "{{testcases_dir}}/ShopFloorProgramming/mwNGSPTest/RegressionTestJobs",
-      "--runtime_data_folder",
-      "{{dev_dir}}/ShopFloorProgramming/mwNGSPTest/runtime_data"
+      "--write_results={{output_dir}}"
     ],
     "responsible": "CNCSim Team",
     "alias": [
       "ngsp"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/ShopFloorProgramming/mwNGSPTest/bin/{{build_config_skipunicode}}/mwNGSPTest.exe",
-        "cwd": "{{dev_dir}}/5axis/customer/quickstart",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwNGSPTest",
-        "dependencies": [
-          {
-            "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-            "project": "buildAll4customer"
-          }
-        ]
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwNGSPTest.exe",
         "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
+        "project": "mwNGSPTest"
+      },
+      "cmake-linux": {
+        "exe": "{{build_dir}}/Binaries/build/mwNGSPTest",
+        "cwd": "{{build_dir}}/Binaries/build",
         "project": "mwNGSPTest"
       },
       "quickstart": {
         "exe": "{{build_dir}}/mwNGSPTest.exe",
-        "cwd": "{{build_dir}}"
+        "cwd": "{{build_dir}}",
+        "command": [
+          "{{exe}}",
+          "--regression_tests_dir={{testcases_dir}}/ShopFloorProgramming/mwNGSPTest/RegressionTestJobs",
+          "--gtest_filter={{input}}",
+          "--write_results={{output_dir}}"
+        ]
+      },
+      "quickstart-linux": {
+        "exe": "{{build_dir}}/mwNGSPTest",
+        "cwd": "{{build_dir}}",
+        "command": [
+          "{{exe}}",
+          "--regression_tests_dir={{testcases_dir}}/ShopFloorProgramming/mwNGSPTest/RegressionTestJobs",
+          "--gtest_filter={{input}}",
+          "--write_results={{output_dir}}"
+        ]
       }
     },
     "tests": {
       "ci": {
         "groups": [
           {
-            "find_gtest": "-mwNGSPRegression*",
+            "find_gtest": "-*RegressionTest*",
             "timeout": 120,
             "execution_style": "parallel"
           },
           {
-            "find_gtest": "mwNGSPRegressionSmoke*",
-            "timeout": 120,
+            "find_gtest": "SmokeTest*",
+            "timeout": 300,
             "execution_style": "parallel",
             "testcases_dependencies": [
-              "ShopFloorProgramming/mwNGSPTest"
+              "ShopFloorProgramming/mwNGSPTest/RegressionTestJobs/Smoke"
             ]
           }
         ]
@@ -966,7 +1148,7 @@
       "api": {
         "groups": [
           {
-            "find_gtest": "-mwNGSPRegression*",
+            "find_gtest": "-*RegressionTest*",
             "timeout": 120,
             "execution_style": "parallel"
           }
@@ -975,11 +1157,11 @@
       "smoke": {
         "groups": [
           {
-            "find_gtest": "mwNGSPRegressionSmoke*",
-            "timeout": 120,
+            "find_gtest": "SmokeTest*",
+            "timeout": 300,
             "execution_style": "parallel",
             "testcases_dependencies": [
-              "ShopFloorProgramming/mwNGSPTest"
+              "ShopFloorProgramming/mwNGSPTest/RegressionTestJobs/Smoke"
             ]
           }
         ]
@@ -987,23 +1169,23 @@
       "nightly": {
         "groups": [
           {
-            "find_gtest": "mwNGSPRegressionNight*",
-            "timeout": 120,
+            "find_gtest": "NightlyTest*",
+            "timeout": 600,
             "execution_style": "parallel",
             "testcases_dependencies": [
-              "ShopFloorProgramming/mwNGSPTest"
+              "ShopFloorProgramming/mwNGSPTest/RegressionTestJobs/Nightly"
             ]
           }
         ]
       },
-      "other": {
+      "uncategorized": {
         "groups": [
           {
-            "find_gtest": "mwNGSPRegressionTest*",
-            "timeout": 120,
+            "find_gtest": "UncategorizedTest*",
+            "timeout": 300,
             "execution_style": "parallel",
             "testcases_dependencies": [
-              "ShopFloorProgramming/mwNGSPTest"
+              "ShopFloorProgramming/mwNGSPTest/RegressionTestJobs/Uncategorized"
             ]
           }
         ]
@@ -1011,11 +1193,11 @@
       "regression": {
         "groups": [
           {
-            "find_gtest": "mwNGSPRegression*",
-            "timeout": 120,
+            "find_gtest": "*RegressionTest*",
+            "timeout": 1500,
             "execution_style": "parallel",
             "testcases_dependencies": [
-              "ShopFloorProgramming/mwNGSPTest"
+              "ShopFloorProgramming/mwNGSPTest/RegressionTestJobs"
             ]
           }
         ]
@@ -1024,10 +1206,10 @@
         "groups": [
           {
             "find_gtest": "*",
-            "timeout": 120,
+            "timeout": 3000,
             "execution_style": "parallel",
             "testcases_dependencies": [
-              "ShopFloorProgramming/mwNGSPTest"
+              "ShopFloorProgramming/mwNGSPTest/RegressionTestJobs"
             ]
           }
         ]
@@ -1041,11 +1223,10 @@
     ],
     "responsible": "5Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/OpenMeshUtils/OpenMeshUtilsGUnitTests/{{build_config}}/OpenMeshUtilsGUnitTests.exe",
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/OpenMeshUtilsTests.exe",
         "cwd": "{{dev_dir}}/libraries/OpenMeshUtils/OpenMeshUtilsGUnitTests/",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "OpenMeshUtilsGUnitTests"
+        "project": "OpenMeshUtilsTests"
       }
     },
     "tests": {
@@ -1076,19 +1257,35 @@
       "--gtest_filter={{input}}"
     ],
     "responsible": "5Axis Team",
-    "disabled": true,
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/ToolpathStrategies/Rotary/{{build_config}}/RotaryUnitTest.exe",
-        "cwd": "{{dev_dir}}/libraries/ToolpathStrategies/Rotary",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "RotaryUnitTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/RotaryUnitTest.exe",
         "cwd": "{{dev_dir}}/libraries/ToolpathStrategies/Rotary",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "RotaryUnitTest"
+      }
+    },
+    "tests": {
+      "ci": {
+        "groups": [
+          {
+            "find_gtest": "*",
+            "timeout": 120
+          }
+        ]
+      }
+    }
+  },
+  "5axui": {
+    "command": [
+      "{{exe}}",
+      "--gtest_filter={{input}}"
+    ],
+    "responsible": "5Axis Team",
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/5axuiTests.exe",
+        "cwd": "{{dev_dir}}/5axis/customer/5axui/Test",
+        "project": "5axuiTests"
       }
     },
     "tests": {
@@ -1110,21 +1307,14 @@
       "--stockmanager",
       "{{dll}}",
       "--out-dir",
-      "{{out_dir}}"
+      "{{generate_output_dir}}"
     ],
     "checkout_parent": true,
     "responsible": "CutSim Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/smtest/{{build_config}}/mwSMTest.exe",
-        "dll": "{{dev_dir}}/5axis/customer/quickstart/mwStockManager.dll",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwSMTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwSMTest.exe",
         "dll": "{{build_dir}}/Binaries/build/{{build_config}}/mwStockManager.dll",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwSMTest"
       }
     },
@@ -1164,16 +1354,9 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/triax/triaxGUnitTests/{{build_config}}/triaxGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/triax/triaxGUnitTests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "triaxGUnitTests"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/triaxGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/triax/triaxGUnitTests",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
+        "cwd": "{{testcases_dir}}/libraries/triax/triaxGUnitTests",
         "project": "triaxGUnitTests"
       }
     },
@@ -1182,7 +1365,10 @@
         "groups": [
           {
             "find_gtest": "*",
-            "timeout": 120
+            "timeout": 120,
+            "testcases_dependencies": [
+              "libraries/triax"
+            ]
           }
         ]
       }
@@ -1195,11 +1381,10 @@
     ],
     "responsible": "3Axis Team",
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/libraries/turning/turningGUnitTests/{{build_config}}/turningGUnitTests.exe",
-        "cwd": "{{dev_dir}}/libraries/turning/turningGUnitTests",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "turningGUnitTests"
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/TurningGUnitTests.exe",
+        "cwd": "{{dev_dir}}/libraries/ToolpathStrategies/Turning/TurningGUnitTests",
+        "project": "TurningGUnitTests"
       }
     },
     "tests": {
@@ -1221,7 +1406,7 @@
       "--verifier",
       "{{dll}}",
       "--out-dir",
-      "{{out_dir}}"
+      "{{generate_output_dir}}"
     ],
     "checkout_parent": true,
     "responsible": "CutSim Team",
@@ -1229,16 +1414,9 @@
       "verifiertests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/test/verifiertest/{{build_config}}/mwVerifierTest.exe",
-        "dll": "{{dev_dir}}/5axis/customer/quickstart/mwVerifier.dll",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwVerifierTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwVerifierTest.exe",
         "dll": "{{build_dir}}/Binaries/build/{{build_config}}/mwVerifier.dll",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwVerifierTest"
       },
       "cmake-linux": {
@@ -1275,7 +1453,7 @@
         "groups": [
           {
             "find_glob": "**/*.verytest.ini",
-            "timeout": 2000
+            "timeout": 4000
           }
         ]
       }
@@ -1285,23 +1463,17 @@
     "command": [
       "{{exe}}",
       "--notimeout",
-      "--gtest_filter={{input}}"
+      "--gtest_filter={{input}}",
+      "--test-data={{testcases_dir}}/cutsim/mwVerifierApiTest"
     ],
     "responsible": "CutSim Team",
     "tags": [
       "verifiertests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/5axis/customer/quickstart/mwVerifierApiTest.exe",
-        "cwd": "{{dev_dir}}/mwcutsim/mwVerifierApiTest/RunDir",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwVerifierApiTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwVerifierApiTest.exe",
         "cwd": "{{dev_dir}}/mwcutsim/mwVerifierApiTest/RunDir",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwVerifierApiTest"
       },
       "cmake-linux": {
@@ -1315,10 +1487,16 @@
         "groups": [
           {
             "find_gtest": "*-*Nightly*:*RunLocal*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierApiTest"
+            ],
             "timeout": 120
           },
           {
             "find_gtest": "*RunLocal*-*Nightly*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierApiTest"
+            ],
             "timeout": 120,
             "execution_style": "parallel"
           }
@@ -1328,10 +1506,16 @@
         "groups": [
           {
             "find_gtest": "*Nightly*-*RunLocal*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierApiTest"
+            ],
             "timeout": 600
           },
           {
             "find_gtest": "*RunLocal*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierApiTest"
+            ],
             "timeout": 600,
             "execution_style": "parallel"
           }
@@ -1343,23 +1527,17 @@
     "command": [
       "{{exe}}",
       "--notimeout",
-      "--gtest_filter={{input}}"
+      "--gtest_filter={{input}}",
+      "--test-data={{testcases_dir}}/cutsim/mwVerifierUnitTest"
     ],
     "responsible": "CutSim Team",
     "tags": [
       "verifiertests"
     ],
     "builds": {
-      "dev-windows": {
-        "exe": "{{dev_dir}}/mwcutsim/mwVerifierUnitTest/{{build_config}}/mwVerifierUnitTest.exe",
-        "cwd": "{{dev_dir}}/mwcutsim/mwVerifierUnitTest/RunDir",
-        "solution": "{{dev_dir}}/5axis/build_all_VS2013.sln",
-        "project": "mwVerifierUnitTest"
-      },
       "cmake-windows": {
         "exe": "{{build_dir}}/Binaries/build/{{build_config}}/mwVerifierUnitTest.exe",
         "cwd": "{{dev_dir}}/mwcutsim/mwVerifierUnitTest/RunDir",
-        "solution": "{{build_dir}}/mwBuildAll.sln",
         "project": "mwVerifierUnitTest"
       },
       "cmake-linux": {
@@ -1373,10 +1551,16 @@
         "groups": [
           {
             "find_gtest": "*-*Nightly*:*RunLocal*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierUnitTest"
+            ],
             "timeout": 120
           },
           {
             "find_gtest": "*RunLocal*-*Nightly*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierUnitTest"
+            ],
             "timeout": 120,
             "execution_style": "parallel"
           }
@@ -1386,12 +1570,72 @@
         "groups": [
           {
             "find_gtest": "*Nightly*-*RunLocal*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierUnitTest"
+            ],
             "timeout": 600
           },
           {
             "find_gtest": "*RunLocal*",
+            "testcases_dependencies": [
+              "cutsim/mwVerifierUnitTest"
+            ],
             "timeout": 600,
             "execution_style": "parallel"
+          }
+        ]
+      }
+    }
+  },
+  "STEPReaderTest": {
+    "command": [
+      "{{exe}}",
+      "--type",
+      "iges",
+      "-o",
+      "{{generate_output_path}}",
+      "--in",
+      "{{input}}",
+      "--ref",
+      "{{testcases_dir}}/libraries/STEPReaderTest/ReferenceAsIges"
+    ],
+    "responsible": "CNCSim Team",
+    "builds": {
+      "cmake-windows": {
+        "exe": "{{build_dir}}/Binaries/build/{{build_config}}/STEPReaderTest.exe",
+        "cwd": "{{build_dir}}/Binaries/build/{{build_config}}",
+        "project": "STEPReaderTest"
+      },
+      "cmake-linux": {
+        "exe": "{{build_dir}}/Binaries/build/STEPReaderTest",
+        "cwd": "{{build_dir}}/Binaries/build",
+        "project": "STEPReaderTest"
+      },
+      "quickstart": {
+        "exe": "{{build_dir}}/STEPReaderTest.exe",
+        "cwd": "{{dev_dir}}/5axis/customer/quickstart"
+      }
+    },
+    "tests": {
+      "ci": {
+        "groups": [
+          {
+            "find_glob": "libraries/STEPReaderTest/STEPFiles/*.stp",
+            "timeout": 30,
+            "execution_style": "singlethreaded",
+            "testcases_dependencies": [
+              "libraries/STEPReaderTest/STEPFiles",
+              "libraries/STEPReaderTest/ReferenceAsIges"
+            ]
+          },
+          {
+            "find_glob": "libraries/STEPReaderTest/STEPFiles/*.step",
+            "timeout": 30,
+            "execution_style": "singlethreaded",
+            "testcases_dependencies": [
+              "libraries/STEPReaderTest/STEPFiles",
+              "libraries/STEPReaderTest/ReferenceAsIges"
+            ]
           }
         ]
       }

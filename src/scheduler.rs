@@ -178,6 +178,7 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
         .current_dir(&ti.command.cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .expect("Failed to launch command!");
 
@@ -436,6 +437,7 @@ impl TestInstance {
         let output_future = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
+            .kill_on_drop(true)
             .output();
         let output = tokio::time::timeout(timeout, output_future).await;
         let output = match output {

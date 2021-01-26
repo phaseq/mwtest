@@ -176,11 +176,11 @@ fn test_command_generator(
     tmp_root: PathBuf,
 ) -> Box<CommandGenerator> {
     let command = command_template.apply("{{input}}", &input);
-    if command.has_pattern("{{out_dir}}") {
+    if command.has_pattern("{{generate_output_dir}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
             let tmp_path = tmp_dir.to_str().unwrap().to_string();
-            let command = command.apply("{{out_dir}}", &tmp_path);
+            let command = command.apply("{{generate_output_dir}}", &tmp_path);
             std::fs::create_dir(&tmp_path).expect("could not create tmp path!");
             TestCommand {
                 command: command.0,
@@ -188,11 +188,11 @@ fn test_command_generator(
                 tmp_path: Some(tmp_dir),
             }
         })
-    } else if command.has_pattern("{{out_file}}") {
+    } else if command.has_pattern("{{generate_output_file}}") {
         Box::new(move || {
             let tmp_dir = tmp_root.join(PathBuf::from(Uuid::new_v4().to_string()));
             let tmp_path = tmp_dir.to_str().unwrap().to_string();
-            let command = command.apply("{{out_file}}", &tmp_path);
+            let command = command.apply("{{generate_output_file}}", &tmp_path);
             TestCommand {
                 command: command.0,
                 cwd: cwd.to_string(),
