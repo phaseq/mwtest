@@ -9,7 +9,7 @@ use futures::prelude::*;
 use futures::select;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio::prelude::*;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ pub fn run(
     output_paths: &crate::OutputPaths,
     run_config: &RunConfig,
 ) -> bool {
-    let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+    let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
     if run_config.xge {
         runtime.block_on(async {
             run_report_xge(test_groups, &input_paths, &output_paths, &run_config).await
@@ -205,8 +205,11 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
     loop {
         stdout.line.clear();
         stderr.line.clear();
-        let mut stdout_fut = stdout_reader.read_line(&mut stdout.line).fuse();
-        let mut stderr_fut = stderr_reader.read_line(&mut stderr.line).fuse();
+
+        let stdout_fut = stdout_reader.read_line(&mut stdout.line).fuse();
+        let stderr_fut = stderr_reader.read_line(&mut stderr.line).fuse();
+        tokio::pin!(stdout_fut);
+        tokio::pin!(stderr_fut);
 
         let (n_read, pipe) = match (stdout.active, stderr.active) {
             (true, true) => {
@@ -343,7 +346,8 @@ async fn run_xge(
             None => line.await,
             Some(request) => {
                 let message = serde_json::to_string(&request).unwrap() + "\n";
-                let mut send_future = { xge_socket.write_all(message.as_bytes()).fuse() };
+                let send_future = { xge_socket.write_all(message.as_bytes()).fuse() };
+                tokio::pin!(send_future);
 
                 loop {
                     select! {

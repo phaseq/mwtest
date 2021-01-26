@@ -271,7 +271,7 @@ impl TestGroup {
         // the glob module can't handle Windows' extended path syntax
         let abs_path = input_paths
             .testcases_dir
-            .join(self.find_glob.clone().unwrap().replace('/', "\\"))
+            .join(self.find_glob.clone().unwrap())
             .to_str()
             .unwrap()
             .to_string();
@@ -496,7 +496,7 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
-        //let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
+        let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
         if root.join("apps.json").exists() {
             root
         } else {

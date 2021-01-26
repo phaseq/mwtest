@@ -19,7 +19,7 @@ pub struct StreamResult {
 }
 
 pub async fn xge() -> (tokio::process::Child, std::io::Result<TcpStream>) {
-    let mut listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+    let listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -41,7 +41,7 @@ pub async fn xge() -> (tokio::process::Child, std::io::Result<TcpStream>) {
 }
 
 pub async fn xge_mock() -> (tokio::process::Child, std::io::Result<TcpStream>) {
-    let mut listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+    let listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
