@@ -4,52 +4,59 @@ use std::fs::File;
 use std::io::BufRead;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct AppsConfig(pub HashMap<String, AppConfig>);
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
-    command: CommandTemplate,
-    responsible: String,
-    alias: Option<Vec<String>>,
-    tags: Option<Vec<String>>,
-    accepted_returncodes: Option<Vec<u32>>, // TODO
+    pub command: CommandTemplate,
+    pub responsible: String,
     #[serde(default)]
-    disabled: bool,
-    builds: HashMap<String, BuildConfig>,
-    tests: HashMap<String, TestPresetConfig>,
+    pub alias: Vec<String>,
     #[serde(default)]
-    globber_matches_parent: bool,
+    pub tags: Vec<String>,
+    #[serde(default = "default_retcodes")]
+    pub accepted_returncodes: Vec<u32>, // TODO
     #[serde(default)]
-    checkout_parent: bool, // TODO
+    pub disabled: bool,
+    pub builds: HashMap<String, BuildConfig>,
+    pub tests: HashMap<String, TestPresetConfig>,
+    #[serde(default)]
+    pub globber_matches_parent: bool,
+    #[serde(default)]
+    pub checkout_parent: bool, // TODO
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct BuildConfig {
-    exe: Option<String>,
-    dll: Option<String>,
-    cwd: Option<String>,
-    solution: Option<String>,
-    project: Option<String>,
+pub struct BuildConfig {
+    pub exe: Option<String>,
+    pub dll: Option<String>,
+    pub cwd: Option<String>,
+    pub solution: Option<String>,
+    pub project: Option<String>,
     #[serde(default)]
-    disabled: bool,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct TestPresetConfig {
-    command: Option<CommandTemplate>,
-    id_pattern: Option<String>,
-    groups: Vec<TestGroup>,
+pub struct TestPresetConfig {
+    pub command: Option<CommandTemplate>,
+    pub id_pattern: Option<String>,
+    pub groups: Vec<TestGroupConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandTemplate(pub Vec<String>);
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct TestGroup {
+pub struct TestGroupConfig {
+    pub command: Option<CommandTemplate>,
     pub find_glob: Option<String>,
     pub find_gtest: Option<String>,
     pub timeout: Option<f32>,
+    pub timeout_if_changed: Option<f32>, // TODO
+    #[serde(default)]
+    pub testcases_dependencies: Vec<String>, // TODO
     #[serde(default = "value_xge")]
     pub execution_style: String,
 }
@@ -76,9 +83,19 @@ pub struct Build {
 
 #[derive(Debug, Clone)]
 pub struct TestPreset {
-    pub command: CommandTemplate,
     pub id_pattern: Option<String>,
     pub groups: Vec<TestGroup>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestGroup {
+    pub command: CommandTemplate,
+    pub find_glob: Option<String>,
+    pub find_gtest: Option<String>,
+    pub timeout: Option<f32>,
+    pub timeout_if_changed: Option<f32>, // TODO
+    pub testcases_dependencies: Vec<String>,
+    pub execution_style: String,
 }
 
 impl AppsConfig {
@@ -104,16 +121,8 @@ impl AppsConfig {
                 let n = n.to_lowercase();
                 n == name.to_lowercase()
                     || n == "all"
-                    || config
-                        .alias
-                        .as_ref()
-                        .map(|aliases| aliases.iter().any(|a| a.to_lowercase() == n))
-                        .unwrap_or(false)
-                    || config
-                        .tags
-                        .as_ref()
-                        .map(|tags| tags.iter().any(|t| t.to_lowercase() == n))
-                        .unwrap_or(false)
+                    || config.alias.iter().any(|a| a.to_lowercase() == n)
+                    || config.tags.iter().any(|t| t.to_lowercase() == n)
             })
         });
 
@@ -184,23 +193,39 @@ impl App {
         let tests = tests
             .into_iter()
             .map(|p| {
-                let mut command = p.command.unwrap_or_else(|| command.clone());
-                for (p, r) in patterns.iter() {
-                    if command.has_pattern(p) {
-                        match r {
-                            Some(r) => command = command.apply(p, r),
-                            None => {
-                                println!("Please specify {}", p);
-                                std::process::exit(-1);
+                let command = p.command.unwrap_or_else(|| command.clone());
+
+                let groups = p
+                    .groups
+                    .into_iter()
+                    .map(|g| {
+                        let mut command = g.command.unwrap_or_else(|| command.clone());
+                        for (p, r) in patterns.iter() {
+                            if command.has_pattern(p) {
+                                match r {
+                                    Some(r) => command = command.apply(p, r),
+                                    None => {
+                                        println!("Please specify {}", p);
+                                        std::process::exit(-1);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                command = command.apply_input_paths(input_paths);
+                        let command = command.apply_input_paths(input_paths);
+                        TestGroup {
+                            command,
+                            find_glob: g.find_glob,
+                            find_gtest: g.find_gtest,
+                            timeout: g.timeout,
+                            timeout_if_changed: g.timeout_if_changed,
+                            testcases_dependencies: g.testcases_dependencies,
+                            execution_style: g.execution_style,
+                        }
+                    })
+                    .collect();
                 TestPreset {
-                    command,
                     id_pattern: p.id_pattern,
-                    groups: p.groups,
+                    groups,
                 }
             })
             .collect();
@@ -244,6 +269,10 @@ impl Build {
     }
 }
 
+fn default_retcodes() -> Vec<u32> {
+    vec![0]
+}
+
 fn value_xge() -> String {
     "xge".to_string()
 }
@@ -262,7 +291,7 @@ impl TestGroup {
             };
             self.generate_path_inputs(&app, id_pattern, &input_paths)
         } else if self.find_gtest.is_some() {
-            self.generate_gtest_inputs(&app, &preset)
+            self.generate_gtest_inputs(&app)
         } else {
             panic!("no test generator defined!");
         }
@@ -317,7 +346,7 @@ impl TestGroup {
             })
             .collect()
     }
-    fn generate_gtest_inputs(&self, app: &App, preset: &TestPreset) -> Vec<crate::TestId> {
+    fn generate_gtest_inputs(&self, app: &App) -> Vec<crate::TestId> {
         let filter = self.find_gtest.clone().unwrap();
         let exe = &app.build.exe;
         if !PathBuf::from(exe).exists() {
@@ -327,7 +356,7 @@ impl TestGroup {
             );
             std::process::exit(-1);
         }
-        let args = preset.command.clone().apply("{{input}}", &filter);
+        let args = self.command.clone().apply("{{input}}", &filter);
         let args = &args.0[1..];
         let cwd = app.build.cwd.as_ref().map(|s| s.as_ref()).unwrap_or(".");
         let output = std::process::Command::new(exe)
@@ -396,7 +425,7 @@ impl InputPaths {
             let dev_dir = match self.dev_dir.as_ref() {
                 Some(d) => d.to_str().unwrap(),
                 None => {
-                    println!("Please specify --dev-dir :)");
+                    println!("Please specify --dev-dir");
                     std::process::exit(-1);
                 }
             };
@@ -406,7 +435,7 @@ impl InputPaths {
             let build_dir = match self.build_dir.as_ref() {
                 Some(d) => d.to_str().unwrap(),
                 None => {
-                    println!("Please specify --build-dir :)");
+                    println!("Please specify --build-dir");
                     std::process::exit(-1);
                 }
             };
@@ -435,11 +464,6 @@ impl InputPaths {
         let build_dir: Option<PathBuf>;
         let build_type: Option<&str>;
         match InputPaths::guess_build_type() {
-            BuildType::Dev(path) => {
-                dev_dir = Some(path.clone());
-                build_dir = Some(path);
-                build_type = Some("dev-windows");
-            }
             BuildType::CMake(build_path, dev_path) => {
                 dev_dir = Some(dev_path);
                 build_dir = Some(build_path);
@@ -501,7 +525,7 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
-        let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
+        //let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
         if root.join("apps.json").exists() {
             root
         } else {
@@ -513,8 +537,6 @@ impl InputPaths {
     fn guess_build_type() -> BuildType {
         if let Some(layout) = InputPaths::find_cmake_layout() {
             layout
-        } else if let Some(dev_root) = InputPaths::find_dev_root() {
-            BuildType::Dev(dev_root.join("dev"))
         } else if InputPaths::is_quickstart() {
             BuildType::Quickstart(std::env::current_dir().unwrap())
         } else {
@@ -553,25 +575,6 @@ impl InputPaths {
         None
     }
 
-    fn find_dev_root() -> Option<PathBuf> {
-        let cwd = std::env::current_dir().unwrap();
-        let dev_component = std::ffi::OsString::from("dev");
-        let mut found = false;
-        let dev: Vec<_> = cwd
-            .components()
-            .take_while(|c| {
-                found = c.as_os_str() == dev_component;
-                !found
-            })
-            .collect();
-        if !found {
-            None
-        } else {
-            let root_components = dev.iter().fold(PathBuf::from(""), |acc, c| acc.join(c));
-            Some(root_components)
-        }
-    }
-
     fn is_quickstart() -> bool {
         let cwd = std::env::current_dir().unwrap();
         cwd.join("mwVerifier.dll").exists() && cwd.join("5axutil.dll").exists()
@@ -579,7 +582,6 @@ impl InputPaths {
 }
 
 enum BuildType {
-    Dev(PathBuf),
     CMake(PathBuf, PathBuf),
     Quickstart(PathBuf),
     None,

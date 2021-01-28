@@ -81,6 +81,9 @@ enum SubCommands {
         #[structopt(long)]
         no_timeout: bool,
     },
+    Info {
+        app_name: String,
+    },
 }
 
 fn main() {
@@ -156,6 +159,9 @@ fn main() {
             if !success {
                 std::process::exit(-1)
             }
+        }
+        SubCommands::Info { app_name } => {
+            cmd_info(app_name, &apps_config, &input_paths);
         }
     }
 }
@@ -257,6 +263,71 @@ fn cmd_run(
     scheduler::run(&input_paths, tests, &output_paths, &run_config)
 }
 
+fn cmd_info(name: String, apps_config: &config::AppsConfig, input_paths: &config::InputPaths) {
+    let apps = apps_config
+        .clone()
+        .select_build_and_preset(&[name], &input_paths);
+    for (name, app) in &apps.0 {
+        let cfg = &apps_config.0[name];
+
+        println!("App: {}", name);
+        println!("Aliases: {:?}", cfg.alias);
+        println!("Tags: {:?}", cfg.tags);
+        println!("Responsible: {}", app.responsible);
+        if cfg.disabled {
+            println!(
+                r#"
+===============================
+This test is currently disabled
+==============================="#
+            )
+        }
+        println!("Build:");
+        println!(
+            "  Config: {} ({:?})",
+            input_paths.build_config, input_paths.build_type
+        );
+        println!("  Executable: {}", app.build.exe);
+        println!(
+            "  Working directory: {}",
+            app.build.cwd.as_deref().unwrap_or("<default>")
+        );
+        println!("  Solution: {:?}", app.build.solution);
+        println!("  Project: {:?}", app.build.project);
+
+        println!("Test Files:");
+
+        for test_preset in &app.tests {
+            for group in &test_preset.groups {
+                if let Some(g) = &group.find_glob {
+                    println!("    files: {}", g);
+                }
+                if let Some(g) = &group.find_gtest {
+                    println!("    gtests: {}", g);
+                }
+                println!("    execution style: {}", group.execution_style);
+                println!("    timeout: {:?}", group.timeout);
+                println!("    timeout if changed: {:?}", group.timeout_if_changed);
+                // generates_outputs
+                println!(
+                    "    testcases dependencies: {:?}",
+                    group.testcases_dependencies
+                );
+                println!("    command: {:?}", group.command);
+            }
+        }
+
+        /*for preset_name in input_paths.preset.split('+') {
+            if let Some(preset) = cfg.tests.get(preset_name) {
+                println!("  Preset: {}", preset_name);
+                for group in preset.groups {
+
+                }
+            }
+        }*/
+    }
+}
+
 #[derive(Debug)]
 pub struct AppWithTests {
     name: String,
@@ -317,7 +388,7 @@ fn generate_app_tests(
                             };
                             GroupWithTests {
                                 test_group: test_group.clone(),
-                                command: preset_config.command.clone(),
+                                command: test_group.command.clone(),
                                 test_ids: test_group
                                     .generate_test_inputs(&app, &preset_config, &input_paths)
                                     .into_iter()
