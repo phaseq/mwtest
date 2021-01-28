@@ -4,6 +4,12 @@ use std::fs::File;
 use std::io::BufRead;
 use std::path::PathBuf;
 
+// The "*Config" structs in this module have exactly the same structure as apps.json.
+// Instantiating them via Apps::select_build_and_preset creates the corresponding "*" structures.
+// The difference between "*Config" and "*" structs:
+//    * they are filtered
+//    * keys that can be specified at different levels (like "command") are passed through to the lowest level
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppsConfig(pub HashMap<String, AppConfig>);
 
@@ -16,7 +22,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default = "default_retcodes")]
-    pub accepted_returncodes: Vec<u32>, // TODO
+    pub accepted_returncodes: Vec<i32>,
     #[serde(default)]
     pub disabled: bool,
     pub builds: HashMap<String, BuildConfig>,
@@ -94,6 +100,7 @@ pub struct TestGroup {
     pub find_gtest: Option<String>,
     pub timeout: Option<f32>,
     pub timeout_if_changed: Option<f32>, // TODO
+    pub accepted_returncodes: Vec<i32>,
     pub testcases_dependencies: Vec<String>,
     pub execution_style: String,
 }
@@ -173,6 +180,7 @@ impl AppConfig {
             build,
             tests,
             self.globber_matches_parent,
+            &self.accepted_returncodes,
         ))
     }
 }
@@ -185,6 +193,7 @@ impl App {
         build: Build,
         tests: Vec<TestPresetConfig>,
         globber_matches_parent: bool,
+        accepted_returncodes: &[i32],
     ) -> Self {
         let patterns = [
             ("{{exe}}", Some(&build.exe)),
@@ -218,6 +227,7 @@ impl App {
                             find_gtest: g.find_gtest,
                             timeout: g.timeout,
                             timeout_if_changed: g.timeout_if_changed,
+                            accepted_returncodes: accepted_returncodes.to_vec(),
                             testcases_dependencies: g.testcases_dependencies,
                             execution_style: g.execution_style,
                         }
@@ -269,7 +279,7 @@ impl Build {
     }
 }
 
-fn default_retcodes() -> Vec<u32> {
+fn default_retcodes() -> Vec<i32> {
     vec![0]
 }
 
@@ -463,7 +473,7 @@ impl InputPaths {
         let dev_dir: Option<PathBuf>;
         let build_dir: Option<PathBuf>;
         let build_type: Option<&str>;
-        match InputPaths::guess_build_type() {
+        match InputPaths::guess_build_type(&given_build_dir) {
             BuildType::CMake(build_path, dev_path) => {
                 dev_dir = Some(dev_path);
                 build_dir = Some(build_path);
@@ -525,7 +535,7 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
-        //let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
+        let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
         if root.join("apps.json").exists() {
             root
         } else {
@@ -534,10 +544,10 @@ impl InputPaths {
         }
     }
 
-    fn guess_build_type() -> BuildType {
-        if let Some(layout) = InputPaths::find_cmake_layout() {
+    fn guess_build_type(build_dir: &Option<String>) -> BuildType {
+        if let Some(layout) = InputPaths::find_cmake_layout(build_dir) {
             layout
-        } else if InputPaths::is_quickstart() {
+        } else if InputPaths::is_quickstart(build_dir) {
             BuildType::Quickstart(std::env::current_dir().unwrap())
         } else {
             BuildType::None
@@ -556,8 +566,9 @@ impl InputPaths {
         }
     }
 
-    fn find_cmake_layout() -> Option<BuildType> {
-        if let Ok(f) = std::fs::File::open("CMakeCache.txt") {
+    fn find_cmake_layout(build_dir: &Option<String>) -> Option<BuildType> {
+        let path = PathBuf::from(build_dir.clone().unwrap_or_default()).join("CMakeCache.txt");
+        if let Ok(f) = std::fs::File::open(path) {
             let mut reader = std::io::BufReader::new(f);
             let mut line = String::new();
             while let Ok(count) = reader.read_line(&mut line) {
@@ -575,9 +586,12 @@ impl InputPaths {
         None
     }
 
-    fn is_quickstart() -> bool {
-        let cwd = std::env::current_dir().unwrap();
-        cwd.join("mwVerifier.dll").exists() && cwd.join("5axutil.dll").exists()
+    fn is_quickstart(build_dir: &Option<String>) -> bool {
+        let cwd = build_dir
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        cwd.join("mwVerifier.dll").exists()
     }
 }
 

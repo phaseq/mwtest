@@ -66,6 +66,7 @@ pub fn create_run_commands(
                 gtest_generator,
                 execution_style: execution_style.clone(),
                 timeout,
+                accepted_returncodes: group.test_group.accepted_returncodes.clone(),
                 tests: test_generators,
             })
         }
@@ -78,6 +79,7 @@ pub struct TestGroup {
     pub gtest_generator: Option<TestInstanceCreator>,
     pub execution_style: ExecutionStyle,
     pub timeout: Option<f32>,
+    pub accepted_returncodes: Vec<i32>,
     pub tests: Vec<TestInstanceCreator>,
 }
 impl TestGroup {

@@ -2,6 +2,8 @@ mod config;
 mod report;
 mod runnable;
 mod scheduler;
+mod svn;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -84,6 +86,33 @@ enum SubCommands {
     Info {
         app_name: String,
     },
+    Checkout {
+        app_names: Vec<String>,
+
+        /// will remove all other checked-out files.
+        //#[structopt(long)]
+        //minimal: bool,
+
+        /// the test id you want to check out
+        //#[structopt(long)]
+        //id: Option<String>,
+
+        /// the test id you want to check out
+        //#[structopt(long)]
+        //id: Option<String>,
+
+        /// any tests with this substring will be checked out
+        //#[structopt(long)]
+        //filter: Option<String>,
+
+        /// revision of dev folder (--revision HEAD), overrides revision branch of --dev-dir
+        #[structopt(long, default_value = "HEAD")]
+        revision: String,
+
+        /// full path to the remote branch (--branch https://svn.moduleworks.com/ModuleWorks/trunk), overrides remote branch of --dev-dir
+        #[structopt(long)]
+        branch: Option<String>,
+    },
 }
 
 fn main() {
@@ -162,6 +191,44 @@ fn main() {
         }
         SubCommands::Info { app_name } => {
             cmd_info(app_name, &apps_config, &input_paths);
+        }
+        SubCommands::Checkout {
+            app_names,
+            //minimal,
+            //id,
+            //filter,
+            revision,
+            branch,
+        } => {
+            if input_paths.dev_dir.is_none() && branch.is_none() {
+                println!("ERROR: you need to specify the dev directory (--dev-dir) or a remote branch (--branch)");
+                println!("Note: the --dev-dir parameter needs to appear before the subcommand \"checkout\"");
+                std::process::exit(-1)
+            }
+            let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
+            /*if let Some(id) = id {
+                println!("checkout: {}", id);
+            } else*/
+            {
+                for app in apps.0.values() {
+                    for test in &app.tests {
+                        for group in &test.groups {
+                            if let Some(expr) = &group.find_glob {
+                                println!("checkout: {}", expr.split('*').next().unwrap());
+                            }
+                        }
+                    }
+                }
+            }
+            for app in apps.0.values() {
+                for test in &app.tests {
+                    for group in &test.groups {
+                        for path in &group.testcases_dependencies {
+                            println!("checkout: {}", path);
+                        }
+                    }
+                }
+            }
         }
     }
 }

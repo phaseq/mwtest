@@ -121,7 +121,7 @@ async fn run_local(
                         } else {
                             let result = instance.run_async(timeout).await;
                             report.lock().unwrap().add(&app_name, instance, &result);
-                            result.exit_code == 0
+                            group.accepted_returncodes.contains(&result.exit_code)
                         }
                     }
                 })
@@ -143,8 +143,8 @@ async fn run_local(
                         for _ in 0..=repeat_if_failed {
                             let instance = tic.instantiate();
                             let result = instance.run_async(timeout).await;
-                            let success = result.exit_code == 0;
-                            results.push((instance, result));
+                            let success = group.accepted_returncodes.contains(&result.exit_code);
+                            results.push((instance, result, success));
                             if success {
                                 break;
                             }
@@ -156,12 +156,12 @@ async fn run_local(
                 .fold(
                     (true, report),
                     |(mut success, report), (app_name, _tic, results)| {
-                        for (test_instance, result) in results {
+                        for (test_instance, result, success_) in results {
                             report
                                 .lock()
                                 .unwrap()
                                 .add(&app_name, test_instance, &result);
-                            success &= result.exit_code == 0;
+                            success &= success_;
                         }
                         future::ready((success, report))
                     },
