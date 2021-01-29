@@ -438,24 +438,43 @@ fn svn_find_workingcopies(root: &str, relpath: &str) -> Result<Vec<String>> {
     let abs_path = PathBuf::from(root).join(relpath);
     if abs_path.exists() {
         let svn_info = info(&abs_path.to_str().unwrap().replace('\\', "/"))?;
-        if !path_endswith(&svn_info.entry.as_ref().unwrap().url, relpath) {
-            println!(
-                "Ignoring unexpected subdirectories in svn url {}. Does not fit to {}",
-                svn_info.entry.as_ref().unwrap().url,
-                relpath
-            );
-        } else {
-            relpath_to_wcs.push(svn_info.entry.as_ref().unwrap().wc_info.depth.clone());
+        match &svn_info.entry {
+            Some(entry) => {
+                if !path_endswith(&entry.url, relpath) {
+                    println!(
+                        "Ignoring unexpected subdirectories in svn url {}. Does not fit to {}",
+                        svn_info.entry.as_ref().unwrap().url,
+                        relpath
+                    );
+                } else {
+                    relpath_to_wcs.push(
+                        svn_info
+                            .entry
+                            .as_ref()
+                            .unwrap()
+                            .wc_info
+                            .wc_root_path
+                            .clone(),
+                    );
+                }
+            }
+            None => {
+                // Only if the current path is not an svn checkout we search in subdirs.
+                // This misses nested svn checkouts, which is possible but unlikely to happen.
+                if abs_path.is_dir() {
+                    for subdir in std::fs::read_dir(abs_path)? {
+                        let subdir = subdir?;
+                        let abs_subdir = subdir.path();
+                        if abs_subdir.is_dir() {
+                            relpath_to_wcs.append(&mut svn_find_workingcopies(
+                                root,
+                                &(relpath.to_owned() + "/" + subdir.file_name().to_str().unwrap()),
+                            )?);
+                        }
+                    }
+                }
+            }
         }
-        // # Only if the current path is not an svn checkout we search in subdirs.
-        // # This misses nested svn checkouts, which is possible but unlikely to happen.
-        // if os.path.isdir(abs_path):
-        //     for subdir in os.listdir(abs_path):
-        //         abs_subdir = os.path.join(abs_path, subdir)
-        //         if os.path.isdir(abs_subdir):
-        //             relpath_to_wcs += svn_find_workingcopies(
-        //                 root, relpath + "/" + subdir
-        //             )
     }
     Ok(relpath_to_wcs)
 }
@@ -726,11 +745,24 @@ struct InfoEntry {
 #[serde(rename = "wc-info")]
 struct WcInfo {
     #[serde(rename = "wcroot-abspath")]
-    wc_root_path: Option<String>,
+    wc_root_path: String,
     depth: String,
 }
 
 fn info(root: &str) -> Result<Info> {
+    let output = Command::new("svn")
+        .args(&["info", "--xml", &root])
+        .output()?;
+    if !output.status.success() {
+        if std::str::from_utf8(&output.stderr)
+            .unwrap()
+            .contains("E155007:")
+        {
+            // E155007: [...] is not a working directory => return an empty info struct
+            return Ok(Info { entry: None });
+        }
+        return Err(eyre!("SVN log failed: {:?}", output));
+    }
     let output = svn(&["info", "--xml", root])?;
     Ok(serde_xml_rs::from_str(&output)?)
 }
@@ -786,8 +818,7 @@ fn svn(args: &[&str]) -> Result<String> {
         .wrap_err("Failed to start SVN")?;
     let stdout = std::str::from_utf8(&output.stdout).unwrap();
     if !output.status.success() {
-        let stderr = std::str::from_utf8(&output.stderr).unwrap();
-        return Err(eyre!("Failed to run SVN: {}{}", stdout, stderr));
+        return Err(eyre!("Failed to run SVN: {:?}\n{:?}", args, output));
     }
     Ok(stdout.to_owned())
 }
@@ -941,5 +972,53 @@ mod tests {
         assert!(super::get_dev_branch_and_revision(ROOT, false).is_err());
         //let next_revision = super::get_next_revision(&branch, revision, false)?;
         Ok(())
+    }
+
+    // TODO: test_detect_testcases_revision
+
+    #[test]
+    #[serial]
+    fn delete_svn_index() {
+        setup();
+        checkout(DEV_URL);
+        let index_path = PathBuf::from(ROOT).join(".svn");
+        assert!(index_path.is_dir());
+        super::delete_svn_index(ROOT);
+        assert!(!index_path.is_dir());
+    }
+
+    #[test]
+    #[serial]
+    fn svn_find_workingcopies() {
+        setup();
+        for f in &TEST_FOLDERS {
+            super::svn(&[
+                "checkout",
+                &(TEST_URL.to_owned() + "/" + f),
+                &(ROOT.to_owned() + "/" + f),
+            ])
+            .unwrap();
+        }
+
+        assert_eq!(
+            super::svn_find_workingcopies(ROOT, ".").unwrap().len(),
+            TEST_FOLDERS.len()
+        );
+        for f in &TEST_FOLDERS {
+            let dirs = super::svn_find_workingcopies(ROOT, f).unwrap();
+            assert!(dirs[0].ends_with(f));
+        }
+        assert_eq!(
+            super::svn_find_workingcopies(ROOT, "./non-existant-subdir").unwrap(),
+            Vec::<String>::new()
+        );
+
+        super::svn(&[
+            "checkout",
+            &(TEST_URL.to_owned() + "/" + TEST_FOLDERS[0]),
+            &(ROOT.to_owned() + "/someOtherDirName/"),
+        ])
+        .unwrap();
+        super::svn_find_workingcopies(ROOT, ".").unwrap();
     }
 }
