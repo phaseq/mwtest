@@ -143,21 +143,17 @@ fn test_id_to_input(
 ) -> (String, String) {
     if let Some(rel_path) = &test_id.rel_path {
         let full_path = input_paths.testcases_dir.join(&rel_path);
+        let full_path_str = full_path.to_str().unwrap().to_string();
         if let Some(cwd) = &app.build.cwd {
             // cncsim case
-            (full_path.to_str().unwrap().to_string(), cwd.clone())
+            (full_path_str, cwd.clone())
         } else if full_path.is_dir() {
             // machsim case
-            let full_path = input_paths.testcases_dir.join(&rel_path);
-            (
-                full_path.to_str().unwrap().to_string(),
-                full_path.to_str().unwrap().to_string(),
-            )
+            (full_path_str.clone(), full_path_str)
         } else {
             // verifier case
-            let file_name = rel_path.file_name().unwrap().to_str().unwrap().to_string();
             let parent_dir = full_path.parent().unwrap().to_str().unwrap().to_string();
-            (file_name, parent_dir)
+            (full_path_str, parent_dir)
         }
     } else {
         // gtest case

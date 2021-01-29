@@ -40,8 +40,8 @@ struct Args {
     preset: Option<String>,
 
     /// specify build type (ReleaseUnicode, RelWithDebInfo, ...)
-    #[structopt(long)]
-    build_config: Option<String>,
+    #[structopt(long, short)]
+    config: Option<String>,
 
     #[structopt(subcommand)]
     cmd: SubCommands,
@@ -127,7 +127,7 @@ fn main() -> Result<()> {
         args.testcases_dir,
         args.build_type,
         args.preset,
-        args.build_config,
+        args.config,
     );
 
     let apps_config = config::AppsConfig::load().wrap_err("Failed to load apps.json!")?;
@@ -238,12 +238,21 @@ fn main() -> Result<()> {
 }
 
 fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
-    let mut dependencies: HashMap<Option<&str>, Vec<&str>> = HashMap::new();
+    let mut dependencies: HashMap<String, Vec<&str>> = HashMap::new();
     for (name, app) in apps.0.iter() {
         let build = &app.build;
-        let solution = build.solution.as_deref();
+        let solution = build.solution.clone().unwrap_or_else(|| {
+            paths
+                .build_dir
+                .as_ref()
+                .unwrap()
+                .join("mwBuildAll.sln")
+                .to_str()
+                .unwrap()
+                .to_owned()
+        });
         let project = build
-            .solution
+            .project
             .as_ref()
             .wrap_err_with(|| format!("no project defined for {}", name))?;
         let deps = dependencies.entry(solution).or_insert_with(Vec::new);
@@ -255,35 +264,33 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
     };
     for (solution, projects) in dependencies {
         let projects = projects.join(",");
-        match (solution, has_buildconsole) {
-            (Some(solution), true) => {
-                println!("building:\n  solution: {}\n  {}", &solution, &projects);
-                Command::new("buildConsole")
-                    .arg(solution)
-                    .arg("/build")
-                    .arg("/silent")
-                    .arg(format!("/cfg={}|x64", paths.build_config))
-                    .arg(format!("/prj={}", projects))
-                    .arg("/openmonitor")
-                    .spawn()
-                    .wrap_err("failed to launch buildConsole!")?
-                    .wait()
-                    .wrap_err("failed to build project!")?;
-            }
-            _ => {
-                println!("building:\n  projects: {}", &projects);
-                Command::new("cmake")
-                    .arg("--build")
-                    .arg(paths.build_dir.as_ref().unwrap())
-                    .arg("--config")
-                    .arg(&paths.build_config)
-                    .arg("--target")
-                    .arg(&projects)
-                    .spawn()
-                    .wrap_err("failed to launch cmake --build!")?
-                    .wait()
-                    .wrap_err("failed to build project!")?;
-            }
+        let status = if has_buildconsole {
+            println!("building:\n  solution: {}\n  {}", &solution, &projects);
+            Command::new("buildConsole")
+                .arg(solution)
+                .arg("/build")
+                .arg("/silent")
+                .arg(format!("/cfg={}|x64", paths.build_config))
+                .arg(format!("/prj={}", projects))
+                .arg("/openmonitor")
+                .status()
+                .wrap_err("failed to build project!")?
+        } else {
+            println!("building:\n  projects: {}", &projects);
+            Command::new("cmake")
+                .arg("--build")
+                .arg(paths.build_dir.as_ref().unwrap())
+                .arg("--config")
+                .arg(&paths.build_config)
+                .arg("--target")
+                .arg(&projects)
+                .status()
+                .wrap_err("failed to build project!")?
+        };
+        if status.success() {
+            println!("Build succeeded.");
+        } else {
+            println!("Build failed.");
         }
     }
     Ok(())
