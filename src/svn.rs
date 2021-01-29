@@ -1,39 +1,35 @@
+use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use serde_derive::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/*fn update(
+fn update(
     dev_dir: &str,
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
     verbose: bool,
-) -> bool {
-    if !svn_available(verbose) {
-        return false;
-    }
+) -> Result<()> {
+    check_svn_available()?;
 
-    let (branch_url, dev_revision) = get_dev_branch_and_revision(&dev_dir, verbose);
-    let next_dev_revision = get_next_revision(&branch_url, &dev_revision, verbose);
-    return update_revision(
+    let (branch_url, dev_revision) = get_dev_branch_and_revision(&dev_dir, verbose)?;
+    let next_dev_revision = get_next_revision(&branch_url, dev_revision, verbose);
+    update_revision(
         &branch_url,
         next_dev_revision,
         &testcase_root_dir,
         &testcase_relative_paths,
         verbose,
-    );
-}*/
+    )
+}
 
-/*
 fn update_revision(
     branch_url: &str,
     next_dev_revision: Revision,
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
     verbose: bool,
-) -> bool {
-    if !svn_available(verbose) {
-        return false;
-    }
+) -> Result<()> {
+    check_svn_available()?;
 
     if verbose {
         println!("Selected branch: {}", branch_url);
@@ -44,7 +40,7 @@ fn update_revision(
 
     let mut wcs = vec![];
     for test_dir in itertools::sorted(testcase_relative_paths) {
-        wcs.insert(svn_find_workingcopies(&testcase_root_dir, &test_dir));
+        wcs.append(&mut svn_find_workingcopies(&testcase_root_dir, &test_dir));
     }
     switch_workingcopies(
         &wcs,
@@ -53,24 +49,22 @@ fn update_revision(
         testcases_revision,
         verbose,
     );
-    return true;
-}*/
+    Ok(())
+}
 
-/*fn checkout(
+fn checkout(
     dev_dir: &str,
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
     force_conversion: bool,
     minimal: bool,
     verbose: bool,
-) -> bool {
-    if !svn_available(verbose) {
-        return false;
-    }
+) -> Result<()> {
+    check_svn_available()?;
 
-    let (branch_url, dev_revision) = get_dev_branch_and_revision(&dev_dir, verbose);
+    let (branch_url, dev_revision) = get_dev_branch_and_revision(&dev_dir, verbose)?;
     let next_dev_revision = get_next_revision(&branch_url, dev_revision, verbose);
-    return checkout_revision(
+    checkout_revision(
         &branch_url,
         next_dev_revision,
         &testcase_root_dir,
@@ -78,10 +72,10 @@ fn update_revision(
         force_conversion,
         minimal,
         verbose,
-    );
-}*/
+    )
+}
 
-/*fn checkout_revision(
+fn checkout_revision(
     branch_url: &str,
     next_dev_revision: Revision,
     testcase_root_dir: &str,
@@ -89,10 +83,8 @@ fn update_revision(
     force_conversion: bool,
     minimal: bool,
     verbose: bool,
-) -> bool {
-    if !svn_available(verbose) {
-        return false;
-    }
+) -> Result<()> {
+    check_svn_available()?;
 
     if verbose {
         println!("Selected branch: {}", branch_url);
@@ -101,9 +93,9 @@ fn update_revision(
 
     let testcases_revision = detect_testcases_revision(&branch_url, next_dev_revision);
 
-    let mut depth = svn_depth(&testcase_root_dir);
+    let mut depth = svn_depth(&testcase_root_dir, ".");
 
-    match depth {
+    match &depth {
         None => {
             if !create_checkout_and_convert(
                 &testcase_root_dir,
@@ -112,10 +104,10 @@ fn update_revision(
                 force_conversion,
                 verbose,
             ) {
-                return false;
+                return Err(eyre!("Failed to create checkout"));
             }
 
-            depth = svn_depth(&testcase_root_dir);
+            depth = svn_depth(&testcase_root_dir, ".");
             if minimal {
                 remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose);
             }
@@ -126,7 +118,7 @@ fn update_revision(
                 remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose);
             }
             switch_workingcopies(
-                &vec![testcase_root_dir],
+                &vec![testcase_root_dir.to_owned()],
                 &testcase_root_dir,
                 &branch_url,
                 testcases_revision,
@@ -135,7 +127,7 @@ fn update_revision(
         }
     }
 
-    if depth == Some("empty") {
+    if depth.as_deref() == Some("empty") {
         create_missing_testcases(
             &testcase_root_dir,
             &testcase_relative_paths,
@@ -144,104 +136,120 @@ fn update_revision(
         );
     }
 
-    return true;
-}*/
+    Ok(())
+}
 
 /// Check if dev is up to date. If not find the last revision before future dev commits.
-/*fn detect_testcases_revision(branch_url: &str, next_dev_revision: Revision) -> Revision {
+fn detect_testcases_revision(branch_url: &str, next_dev_revision: Revision) -> Revision {
     let mut testcases_revision = Revision::Head;
-    if let Some(Revision::Revision(rev)) = next_dev_revision {
+    if let Revision::Revision(rev) = next_dev_revision {
         // Only change HEAD, if we really have testcases commits after the guessed revision.
         // This makes the console output a bit nicer.
-        let later_test_logs = SvnLogs(
-            branch_url + "/testcases",
+        let later_test_logs = log(
+            &(branch_url.to_string() + "/testcases"),
             next_dev_revision,
             Revision::Head,
-            /*limit=*/ 1,
+            /*limit=*/ Some(1),
         )
-        .items;
+        .log;
         if !later_test_logs.is_empty() {
             testcases_revision = Revision::Revision(rev - 1);
-            println!(
-                "Your dev folder is not at the latest revision. The guessed testcases "
-                "revision will be wrong, if you committed your testcase changes before "
-                "your dev changes.",
-            )
+            println!(concat!(
+                "Your dev folder is not at the latest revision. The guessed testcases ",
+                "revision will be wrong, if you committed your testcase changes before ",
+                "your dev changes."
+            ),)
         }
     }
     testcases_revision
-}*/
+}
 
-/*fn create_checkout_and_convert(
-    testcase_root_dir: &str, branch_url: &str, revision: Revision, force_conversion: bool, verbose: bool
-) -> bool{
+fn create_checkout_and_convert(
+    testcase_root_dir: &str,
+    branch_url: &str,
+    revision: Revision,
+    force_conversion: bool,
+    verbose: bool,
+) -> bool {
     let nested_checkouts = svn_find_workingcopies(&testcase_root_dir, ".");
     if !nested_checkouts.is_empty() {
         if !force_conversion {
-            println!(
-                "Aborting because of existing checkouts in testcases. "
+            println!(concat!(
+                "Aborting because of existing checkouts in testcases. ",
                 "Use --force to convert them to a single sparse checkout."
-            );
-            return false
+            ));
+            return false;
         }
 
         if verbose {
-            println!("Found nested checkouts that need conversion. ")
+            println!("Found nested checkouts that need conversion. ");
             println!(
                 "Please don't abort or you might have to manually delete your testcases folder!"
-            )
+            );
         }
         // Switching has to be done before conversion to avoid new local changes
         // when .svn index is deleted
         switch_workingcopies(
-            &nested_checkouts, &testcase_root_dir, &branch_url, revision, verbose
+            &nested_checkouts,
+            &testcase_root_dir,
+            &branch_url,
+            revision,
+            verbose,
         );
     }
 
-    let not_allowed_status = ["conflicted", "unversioned", "added", "deleted", "replaced"]
-    for wc in nested_checkouts {
-        let status = status(root);
+    for wc in &nested_checkouts {
+        let status = status(&wc);
         let has_not_allowed_status = status.target.iter().any(|t| {
             ["conflicted", "unversioned", "added", "deleted", "replaced"]
                 .contains(&t.wc_status.item.as_str())
         });
         if has_not_allowed_status {
-            println!("Can't proceed because of uncommitted changes in '{}'. "
-                "Please solve those manually or delete the whole testcases folder.", wc);
-            std::process::exit(-1);
+            println!(
+                concat!(
+                    "Can't proceed because of uncommitted changes in '{}'. ",
+                    "Please solve those manually or delete the whole testcases folder."
+                ),
+                wc
+            );
+            return false;
         }
-        return false
     }
 
     if verbose {
-        println!("Creating sparse checkout " + testcase_root_dir);
+        println!("Creating sparse checkout {}", testcase_root_dir);
     }
-    svn(
-        &[
+    if !Command::new("svn")
+        .args(&[
             "checkout",
             "--depth=empty",
             "--force",
             &format!("{}/testcases@{}", branch_url, revision),
             testcase_root_dir,
-        ]
-    );
+        ])
+        .status()
+        .unwrap()
+        .success()
+    {
+        panic!("svn failed");
+    }
 
     if !nested_checkouts.is_empty() {
         if verbose {
             println!("Converting nested checkouts");
         }
         for wc_path in itertools::sorted(nested_checkouts) {
-            let wc_relpath = svn_relpath(wc_path, testcase_root_dir);
+            let wc_relpath = svn_relpath(&wc_path, testcase_root_dir);
             if verbose {
-                print_svn_path(wc_relpath);
+                print_svn_path(&wc_relpath);
             }
-            delete_svn_index(wc_path);
+            delete_svn_index(&wc_path);
             // TODO: do nested checkouts always have depth=infinity?
-            svn_make_sparse(testcase_root_dir, wc_relpath, revision);
+            svn_make_sparse(&testcase_root_dir, &wc_relpath, revision);
         }
     }
     true
-}*/
+}
 
 fn remove_unneded_testcases(
     testcase_root_dir: &str,
@@ -522,24 +530,103 @@ fn svn_resolve_relpath(url: &str, relpath: &str) -> String {
     itertools::join(url_list, "/")
 }
 
+/// Returns svn branch url and revision of local dev working copy
+fn get_dev_branch_and_revision(dev_dir: &str, verbose: bool) -> Result<(String, u32)> {
+    if verbose {
+        println!("Checking {}", dev_dir);
+    }
+
+    let dev_info = info(&dev_dir);
+    let dev_info = dev_info.entry.unwrap();
+    if !dev_info.relative_url.ends_with("/dev") {
+        panic!(
+            "Invalid dev svn url: {}\nwhile checking {}",
+            dev_info.url, dev_dir
+        );
+    }
+    let branch_url = &dev_info.url[0..dev_info.url.len() - 4];
+    let relative_branch_url = &dev_info.relative_url[1..dev_info.relative_url.len() - 4]; // strip also ^ from start
+    if verbose {
+        println!("  - Branch is {}", relative_branch_url);
+    }
+
+    // By using svnversion to get the dev revision, we get the range of revisions spread
+    // over the working copy (often happens when the user commits in sub directories of dev).
+    // If there are no commits after the last local revision, we assume we are up to date.
+    // But theoretically, someone can update a sub directory back after committing, while
+    // another sub directory already has a larger revision. Then the working copy is NOT up to date.
+    // TODO: Let's accept the error in this unlikely case for now, as checking all relevant
+    // sub directories with svn info can be costly. Also checking for each changed path of
+    // commits can be costly.
+    let dev_revision = svn_revision(dev_dir)?;
+
+    Ok((branch_url.to_owned(), dev_revision))
+}
+
+/// Returns next dev revision
+fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Revision {
+    if verbose {
+        println!("Checking {}", branch_url);
+    }
+
+    let dev_logs = log(
+        &(branch_url.to_owned() + "/dev"),
+        Revision::Revision(dev_revision + 1),
+        Revision::Head,
+        None,
+    )
+    .log;
+    let next_dev_revision = if dev_logs.is_empty() {
+        Revision::Head
+    } else {
+        Revision::Revision(dev_logs.iter().map(|e| e.revision).min().unwrap())
+    };
+
+    if verbose {
+        if next_dev_revision == Revision::Head {
+            println!("  - Dev revision is {}", dev_revision);
+        } else {
+            println!("  - Dev revision is {} (NOT at HEAD)", dev_revision);
+        }
+    }
+
+    next_dev_revision
+}
+
 fn svn_depth(local_path: &str, cwd: &str) -> Option<String> {
     info(&local_path).entry.map(|e| e.depth)
 }
 
-fn svn_available(verbose: bool) -> bool {
-    let output = match Command::new("svn").arg("--version").output() {
-        Ok(output) => output,
-        Err(e) => {
-            if verbose {
-                println!(
-                    concat!("Could not find svn. Please make sure you installed an svn command line client ",
-                    "and put it into the system searh path. For Windows for example install Tortoise SVN ",
-                    "and make sure 'command line client tools' are selected.")
-                );
-            }
-            return false;
-        }
-    };
+fn svn_revision(local_path: &str) -> Result<u32> {
+    let revisions = svn_revisions(local_path);
+    revisions.map(|rs| *rs.last().unwrap())
+}
+
+fn svn_revisions(local_path: &str) -> Result<Vec<u32>> {
+    let output = Command::new("svnversion")
+        .arg(&local_path)
+        .output()
+        .unwrap();
+    let output = std::str::from_utf8(&output.stdout).unwrap();
+    let mut revs = output.split(':');
+    let r1 = revs.next().map(|r| r.parse());
+    let r2 = revs.next().map(|r| r.parse());
+    match (r1, r2) {
+        (Some(Ok(r1)), None) => Ok(vec![r1]),
+        (Some(Ok(r1)), Some(Ok(r2))) => Ok(vec![r1, r2]),
+        _ => Err(eyre!("Failed to parse output of 'svnversion'.")),
+    }
+}
+
+fn check_svn_available() -> Result<()> {
+    let output = Command::new("svn")
+        .arg("--version")
+        .output()
+        .wrap_err(concat!(
+            "Could not find svn. Please make sure you installed an svn command line client ",
+            "and put it into the system searh path. For Windows for example install Tortoise SVN ",
+            "and make sure 'command line client tools' are selected."
+        ))?;
     let output = std::str::from_utf8(&output.stdout).unwrap();
 
     let re = regex::Regex::new(r"version (\d+)\.(\d+)").unwrap();
@@ -547,23 +634,19 @@ fn svn_available(verbose: bool) -> bool {
         Some(cap) => {
             let (major, minor) = (cap[0].parse().unwrap(), cap[1].parse().unwrap());
             if (major, minor) >= (1, 6) {
-                true
+                Ok(())
             } else {
-                if verbose {
-                    println!(
-                        "Found svn version {}.{}. Please install a version of at least 1.6.",
-                        major, minor
-                    );
-                }
-                false
+                Err(eyre!(
+                    "Found svn version {}.{}. Please install a version of at least 1.6.",
+                    major,
+                    minor
+                ))
             }
         }
         None => {
-            if verbose {
-                println!(
-                "Could not validate version of svn. Please make sure a recent svn with at least version 1.6 is installed.");
-            }
-            false
+            Err(eyre!(
+                "Could not validate version of svn. Please make sure a recent svn with at least version 1.6 is installed."
+            ))
         }
     }
 }
@@ -587,7 +670,7 @@ fn print_svn_path(mut path: &str) {
     println!("  - {}", path);
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum Revision {
     Head,
     Revision(u32),
@@ -642,19 +725,53 @@ struct Info {
 #[serde(rename = "entry")]
 struct InfoEntry {
     url: String,
+    #[serde(rename = "relative-url")]
+    relative_url: String,
     depth: String,
     #[serde(rename = "wcroot-abspath")]
     wc_root_path: String,
 }
 
 fn info(root: &str) -> Info {
-    let status = Command::new("svn")
+    let output = Command::new("svn")
         .args(&["info", "--xml", root])
         .output()
         .expect("SVN failed!");
-    if !status.status.success() {
+    if !output.status.success() {
         panic!("SVN failed!");
     }
-    let output = std::str::from_utf8(&status.stdout).unwrap();
+    let output = std::str::from_utf8(&output.stdout).unwrap();
+    serde_xml_rs::from_str(output).unwrap()
+}
+
+#[derive(Deserialize)]
+#[serde(rename = "log")]
+struct Log {
+    log: Vec<LogEntry>,
+}
+#[derive(Deserialize)]
+#[serde(rename = "logentry")]
+struct LogEntry {
+    revision: u32,
+}
+
+fn log(root: &str, revision_start: Revision, revision_end: Revision, limit: Option<u32>) -> Log {
+    let mut cmd = Command::new("svn");
+    cmd.args(&[
+        "log",
+        "--xml",
+        "-v",
+        "-r",
+        &format!("{}:{}", revision_start, revision_end),
+        &root,
+    ]);
+    if let Some(limit) = limit {
+        cmd.args(&["-l", &format!("{}", limit)]);
+    }
+    let output = cmd.output().expect("SVN failed!");
+    if !output.status.success() {
+        panic!("SVN failed!");
+    }
+    let output = std::str::from_utf8(&output.stdout).unwrap();
     serde_xml_rs::from_str(output).unwrap()
 }
