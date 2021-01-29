@@ -1,7 +1,9 @@
+use color_eyre::eyre::{ContextCompat, Result};
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufRead;
+use std::iter::FromIterator;
 use std::path::PathBuf;
 
 // The "*Config" structs in this module have exactly the same structure as apps.json.
@@ -106,7 +108,7 @@ pub struct TestGroup {
 }
 
 impl AppsConfig {
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load() -> Result<Self> {
         Ok(serde_json::from_reader(File::open(
             InputPaths::mwtest_config_path(),
         )?)?)
@@ -122,7 +124,7 @@ impl AppsConfig {
         self: Self,
         app_names: &[String],
         input_paths: &InputPaths,
-    ) -> Apps {
+    ) -> Result<Apps> {
         let selected_app_configs = self.0.into_iter().filter(|(name, config)| {
             app_names.iter().any(|n| {
                 let n = n.to_lowercase();
@@ -133,15 +135,16 @@ impl AppsConfig {
             })
         });
 
-        let apps = selected_app_configs
+        let apps: Result<Vec<_>> = selected_app_configs
             .filter_map(|(name, config)| {
                 config
                     .select_build_and_preset(&name, input_paths)
-                    .map(|app| (name, app))
+                    .map(|option_app| option_app.map(|app| (name, app)))
+                    .transpose()
             })
             .collect();
-
-        Apps(apps)
+        let apps = HashMap::from_iter(apps?.into_iter());
+        Ok(Apps(apps))
     }
 }
 
@@ -150,7 +153,7 @@ impl AppConfig {
         mut self: Self,
         name: &str,
         input_paths: &InputPaths,
-    ) -> Option<App> {
+    ) -> Result<Option<App>> {
         let build_type: &str = match &input_paths.build_type {
             Some(b) => b,
             None => {
@@ -158,12 +161,12 @@ impl AppConfig {
                 std::process::exit(-1);
             }
         };
-        let build_config = self.builds.remove(build_type).unwrap_or_else(|| {
-            println!("build '{}' not found in '{}'", build_type, name);
-            std::process::exit(-1);
-        });
+        let build_config = self
+            .builds
+            .remove(build_type)
+            .wrap_err_with(|| format!("build '{}' not found in '{}'", build_type, name))?;
         if build_config.disabled {
-            return None;
+            return Ok(None);
         }
 
         let build = Build::from(&build_config, &input_paths);
@@ -173,7 +176,7 @@ impl AppConfig {
             .filter_map(|p| self.tests.get(p))
             .cloned()
             .collect();
-        Some(App::from(
+        Ok(Some(App::from(
             input_paths,
             self.command,
             self.responsible,
@@ -181,7 +184,7 @@ impl AppConfig {
             tests,
             self.globber_matches_parent,
             &self.accepted_returncodes,
-        ))
+        )))
     }
 }
 
@@ -535,7 +538,7 @@ impl InputPaths {
             .parent()
             .unwrap()
             .to_path_buf();
-        let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
+        //let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
         if root.join("apps.json").exists() {
             root
         } else {

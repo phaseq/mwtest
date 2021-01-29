@@ -1,5 +1,6 @@
 use crate::runnable;
 use crate::scheduler;
+use color_eyre::eyre::{Result, WrapErr};
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -24,17 +25,18 @@ pub struct Report {
     n: usize,
 }
 impl Report {
-    pub fn new(artifacts_root: &Path, testcases_root: &str, verbose: bool) -> Report {
+    pub fn new(artifacts_root: &Path, testcases_root: &str, verbose: bool) -> Result<Report> {
         let xml_location = &artifacts_root.join("results.xml");
         let report = Report {
             std_out: CliLogger::create(verbose),
             file_logger: FileLogger::new(&artifacts_root),
-            xml_report: XmlReport::create(&xml_location, &artifacts_root, &testcases_root).unwrap(),
+            xml_report: XmlReport::create(&xml_location, &artifacts_root, &testcases_root)
+                .wrap_err("failed to create XML report")?,
             i: 0,
             n: 0,
         };
         report.std_out.init();
-        report
+        Ok(report)
     }
 }
 impl Reportable for Report {

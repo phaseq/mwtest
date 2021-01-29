@@ -2,8 +2,9 @@ mod config;
 mod report;
 mod runnable;
 mod scheduler;
-mod svn;
+//mod svn;
 
+use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -115,7 +116,9 @@ enum SubCommands {
     },
 }
 
-fn main() {
+fn main() -> Result<()> {
+    color_eyre::install()?;
+
     let args = Args::from_args();
 
     let input_paths = config::InputPaths::from(
@@ -127,17 +130,16 @@ fn main() {
         args.build_config,
     );
 
-    let apps_config = config::AppsConfig::load().expect("Failed to load apps.json!");
+    let apps_config = config::AppsConfig::load().wrap_err("Failed to load apps.json!")?;
 
     match args.cmd {
         SubCommands::Build { app_names } => {
-            let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
-            cmd_build(&apps, &input_paths);
-            std::process::exit(0);
+            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
+            cmd_build(&apps, &input_paths)?;
         }
         SubCommands::List { app_names, filter } => {
             if !app_names.is_empty() {
-                let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
+                let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
                 let app_tests = generate_app_tests(filter, vec![], &input_paths, &apps, false);
                 cmd_list_tests(&app_tests);
             } else {
@@ -155,7 +157,7 @@ fn main() {
             repeat_if_failed,
             no_timeout,
         } => {
-            let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
+            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
             let can_run_raw_gtest =
                 filter.is_empty() && id.is_empty() && !parallel && !xge && repeat_if_failed == 0;
             let app_tests = generate_app_tests(filter, id, &input_paths, &apps, can_run_raw_gtest);
@@ -184,13 +186,13 @@ fn main() {
                 &output_paths,
                 &run_config,
                 no_timeout,
-            );
+            )?;
             if !success {
                 std::process::exit(-1)
             }
         }
         SubCommands::Info { app_name } => {
-            cmd_info(app_name, &apps_config, &input_paths);
+            cmd_info(app_name, &apps_config, &input_paths)?;
         }
         SubCommands::Checkout {
             app_names,
@@ -205,7 +207,7 @@ fn main() {
                 println!("Note: the --dev-dir parameter needs to appear before the subcommand \"checkout\"");
                 std::process::exit(-1)
             }
-            let apps = apps_config.select_build_and_preset(&app_names, &input_paths);
+            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
             /*if let Some(id) = id {
                 println!("checkout: {}", id);
             } else*/
@@ -231,20 +233,21 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }
 
-fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) {
-    let mut dependencies: HashMap<&str, Vec<&str>> = HashMap::new();
+fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
+    let mut dependencies: HashMap<Option<&str>, Vec<&str>> = HashMap::new();
     for (name, app) in apps.0.iter() {
         let build = &app.build;
-        if build.solution.is_none() || build.project.is_none() {
-            println!("ERROR: no solution/project defined for {}", name);
-            std::process::exit(-1);
-        }
-        let deps = dependencies
-            .entry(build.solution.as_ref().unwrap())
-            .or_insert_with(Vec::new);
-        (*deps).push(build.project.as_ref().unwrap());
+        let solution = build.solution.as_deref();
+        let project = build
+            .solution
+            .as_ref()
+            .wrap_err_with(|| format!("no project defined for {}", name))?;
+        let deps = dependencies.entry(solution).or_insert_with(Vec::new);
+        (*deps).push(project);
     }
     let has_buildconsole = match Command::new("buildConsole").spawn() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
@@ -252,34 +255,38 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) {
     };
     for (solution, projects) in dependencies {
         let projects = projects.join(",");
-        if has_buildconsole {
-            println!("building:\n  solution: {}\n  {}", &solution, &projects);
-            Command::new("buildConsole")
-                .arg(solution)
-                .arg("/build")
-                .arg("/silent")
-                .arg(format!("/cfg={}|x64", paths.build_config))
-                .arg(format!("/prj={}", projects))
-                .arg("/openmonitor")
-                .spawn()
-                .expect("failed to launch buildConsole!")
-                .wait()
-                .expect("failed to build project!");
-        } else {
-            println!("building:\n  projects: {}", &projects);
-            Command::new("cmake")
-                .arg("--build")
-                .arg(paths.build_dir.as_ref().unwrap())
-                .arg("--config")
-                .arg(&paths.build_config)
-                .arg("--target")
-                .arg(&projects)
-                .spawn()
-                .expect("failed to launch cmake --build!")
-                .wait()
-                .expect("failed to build project!");
+        match (solution, has_buildconsole) {
+            (Some(solution), true) => {
+                println!("building:\n  solution: {}\n  {}", &solution, &projects);
+                Command::new("buildConsole")
+                    .arg(solution)
+                    .arg("/build")
+                    .arg("/silent")
+                    .arg(format!("/cfg={}|x64", paths.build_config))
+                    .arg(format!("/prj={}", projects))
+                    .arg("/openmonitor")
+                    .spawn()
+                    .wrap_err("failed to launch buildConsole!")?
+                    .wait()
+                    .wrap_err("failed to build project!")?;
+            }
+            _ => {
+                println!("building:\n  projects: {}", &projects);
+                Command::new("cmake")
+                    .arg("--build")
+                    .arg(paths.build_dir.as_ref().unwrap())
+                    .arg("--config")
+                    .arg(&paths.build_config)
+                    .arg("--target")
+                    .arg(&projects)
+                    .spawn()
+                    .wrap_err("failed to launch cmake --build!")?
+                    .wait()
+                    .wrap_err("failed to build project!")?;
+            }
         }
     }
+    Ok(())
 }
 
 fn cmd_list_apps(apps: &config::AppsConfig) {
@@ -304,15 +311,14 @@ fn cmd_run(
     output_paths: &OutputPaths,
     run_config: &scheduler::RunConfig,
     no_timeout: bool,
-) -> bool {
+) -> Result<bool> {
     if Path::exists(&output_paths.out_dir) {
         if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
-            println!(
+            return Err(eyre!(
                 "ERROR: can't reset the output directory: {:?}.\n It doesn't look like it \
                  was created by mwtest. Please select another one or delete it manually.",
                 &output_paths.out_dir
-            );
-            std::process::exit(-1);
+            ));
         }
         std::fs::remove_dir_all(&output_paths.out_dir).expect("could not clean up tmp directory!");
     }
@@ -330,10 +336,14 @@ fn cmd_run(
     scheduler::run(&input_paths, tests, &output_paths, &run_config)
 }
 
-fn cmd_info(name: String, apps_config: &config::AppsConfig, input_paths: &config::InputPaths) {
+fn cmd_info(
+    name: String,
+    apps_config: &config::AppsConfig,
+    input_paths: &config::InputPaths,
+) -> Result<()> {
     let apps = apps_config
         .clone()
-        .select_build_and_preset(&[name], &input_paths);
+        .select_build_and_preset(&[name], &input_paths)?;
     for (name, app) in &apps.0 {
         let cfg = &apps_config.0[name];
 
@@ -393,6 +403,7 @@ This test is currently disabled
             }
         }*/
     }
+    Ok(())
 }
 
 #[derive(Debug)]

@@ -5,6 +5,7 @@ use crate::report::Reportable;
 use crate::runnable::{ExecutionStyle, TestCommand};
 use crate::runnable::{TestGroup, TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
+use color_eyre::eyre::Result;
 use futures::prelude::*;
 use futures::select;
 use std::collections::VecDeque;
@@ -31,7 +32,7 @@ pub fn run(
     test_groups: Vec<TestGroup>,
     output_paths: &crate::OutputPaths,
     run_config: &RunConfig,
-) -> bool {
+) -> Result<bool> {
     let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
     if run_config.xge {
         runtime.block_on(async {
@@ -56,7 +57,7 @@ async fn run_report_local(
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
-) -> bool {
+) -> Result<bool> {
     let report = Arc::new(Mutex::new(report::Report::new(
         &output_paths.out_dir,
         input_paths
@@ -64,8 +65,8 @@ async fn run_report_local(
             .to_str()
             .expect("Couldn't convert path to string!"),
         run_config.verbose,
-    )));
-    run_local(test_groups, run_config, report).await
+    )?));
+    Ok(run_local(test_groups, run_config, report).await)
 }
 
 async fn run_local(
@@ -276,7 +277,7 @@ async fn run_report_xge(
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
     run_config: &RunConfig,
-) -> bool {
+) -> Result<bool> {
     let mut report = report::Report::new(
         &output_paths.out_dir,
         input_paths
@@ -284,8 +285,8 @@ async fn run_report_xge(
             .to_str()
             .expect("Couldn't convert path to string!"),
         run_config.verbose,
-    );
-    run_xge(test_groups, run_config, &mut report, false).await
+    )?;
+    Ok(run_xge(test_groups, run_config, &mut report, false).await)
 }
 
 async fn run_xge(
