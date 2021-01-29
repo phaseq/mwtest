@@ -116,7 +116,7 @@ impl AppsConfig {
             (_, build_dir) if build_dir.join("mwtest/apps.json").exists() => {
                 build_dir.join("mwtest/apps.json")
             }
-            _ => Err(eyre!("Could not find apps.json!"))?,
+            _ => return Err(eyre!("Could not find apps.json!")),
         };
         Ok(serde_json::from_reader(File::open(apps_json_path)?)?)
     }

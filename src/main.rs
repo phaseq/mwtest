@@ -2,7 +2,7 @@ mod config;
 mod report;
 mod runnable;
 mod scheduler;
-//mod svn;
+mod svn;
 
 use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use std::collections::HashMap;
