@@ -1,10 +1,10 @@
-use color_eyre::eyre::{ContextCompat, Result};
+use color_eyre::eyre::{eyre, ContextCompat, Result};
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufRead;
 use std::iter::FromIterator;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // The "*Config" structs in this module have exactly the same structure as apps.json.
 // Instantiating them via Apps::select_build_and_preset creates the corresponding "*" structures.
@@ -108,10 +108,17 @@ pub struct TestGroup {
 }
 
 impl AppsConfig {
-    pub fn load() -> Result<Self> {
-        Ok(serde_json::from_reader(File::open(
-            InputPaths::mwtest_config_path(),
-        )?)?)
+    pub fn load(dev_dir: &Option<PathBuf>, build_dir: &Path) -> Result<Self> {
+        let apps_json_path = match (dev_dir, build_dir) {
+            (Some(dev_dir), _) if dev_dir.join("tools/mwtest/apps.json").exists() => {
+                dev_dir.join("tools/mwtest/apps.json")
+            }
+            (_, build_dir) if build_dir.join("mwtest/apps.json").exists() => {
+                build_dir.join("mwtest/apps.json")
+            }
+            _ => Err(eyre!("Could not find apps.json!"))?,
+        };
+        Ok(serde_json::from_reader(File::open(apps_json_path)?)?)
     }
 
     pub fn app_names(self: &Self) -> Vec<String> {
@@ -425,7 +432,7 @@ impl CommandTemplate {
 #[derive(Debug)]
 pub struct InputPaths {
     pub dev_dir: Option<PathBuf>,
-    pub build_dir: Option<PathBuf>,
+    pub build_dir: PathBuf,
     pub testcases_dir: PathBuf,
     pub build_type: Option<String>,
     pub preset: String,
@@ -445,14 +452,7 @@ impl InputPaths {
             s = s.replace("{{dev_dir}}", dev_dir);
         }
         if s.contains("{{build_dir}}") {
-            let build_dir = match self.build_dir.as_ref() {
-                Some(d) => d.to_str().unwrap(),
-                None => {
-                    println!("Please specify --build-dir");
-                    std::process::exit(-1);
-                }
-            };
-            s = s.replace("{{build_dir}}", build_dir);
+            s = s.replace("{{build_dir}}", self.build_dir.to_str().unwrap());
         }
         if s.contains("{{testcases_dir}}") {
             s = s.replace("{{testcases_dir}}", self.testcases_dir.to_str().unwrap());
@@ -472,7 +472,7 @@ impl InputPaths {
         given_build_type: Option<String>,
         given_preset: Option<String>,
         given_build_config: Option<String>,
-    ) -> InputPaths {
+    ) -> Result<InputPaths> {
         let dev_dir: Option<PathBuf>;
         let build_dir: Option<PathBuf>;
         let build_type: Option<&str>;
@@ -494,22 +494,20 @@ impl InputPaths {
             }
         }
         let dev_dir = given_dev_dir.map(PathBuf::from).or(dev_dir);
-        let build_dir = given_build_dir.map(PathBuf::from).or(build_dir);
+        let build_dir = given_build_dir
+            .map(PathBuf::from)
+            .or(build_dir)
+            .wrap_err("Could not determine --build-dir. You may have to specify it explicitly.")?;
         let build_type = given_build_type.or_else(|| build_type.map(|s| s.to_string()));
 
         let testcases_dir = given_testcases_dir
             .map(PathBuf::from)
-            .or_else(|| InputPaths::guess_testcases_layout(&build_dir));
+            .or_else(|| InputPaths::guess_testcases_layout(&build_dir))
+            .wrap_err(
+                "Could not determine --testcases-dir. You may have to specify it explicitly.",
+            )?;
 
         let preset = given_preset.unwrap_or_else(|| "ci".to_string());
-
-        let testcases_dir = match testcases_dir {
-            Some(t) if t.exists() => t,
-            _ => {
-                println!("Could not determine build-dir! You may have to specify it explicitly!");
-                std::process::exit(-1);
-            }
-        };
 
         // println!("dev_dir: {:?}", dev_dir);
         // println!("build_dir: {:?}", build_dir);
@@ -518,33 +516,14 @@ impl InputPaths {
 
         let build_config = given_build_config.unwrap_or_else(|| "RelWithDebInfo".to_string());
 
-        InputPaths {
+        Ok(InputPaths {
             dev_dir,
             build_dir,
             testcases_dir,
             build_type,
             preset,
             build_config,
-        }
-    }
-
-    fn mwtest_config_path() -> PathBuf {
-        InputPaths::mwtest_config_root().join("apps.json")
-    }
-
-    fn mwtest_config_root() -> PathBuf {
-        let root = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        //let root = PathBuf::from("/home/fabianb/Dev/Rust/mwtest");
-        if root.join("apps.json").exists() {
-            root
-        } else {
-            // for "cargo run"
-            root.join("../..")
-        }
+        })
     }
 
     fn guess_build_type(build_dir: &Option<String>) -> BuildType {
@@ -557,11 +536,8 @@ impl InputPaths {
         }
     }
 
-    fn guess_testcases_layout(build_dir: &Option<PathBuf>) -> Option<PathBuf> {
-        let guessed_path = match build_dir {
-            Some(build_dir) => build_dir.parent()?.join("testcases"),
-            None => PathBuf::from("..").join("testcases"),
-        };
+    fn guess_testcases_layout(build_dir: &PathBuf) -> Option<PathBuf> {
+        let guessed_path = build_dir.parent()?.join("testcases");
         if guessed_path.exists() {
             Some(guessed_path)
         } else {

@@ -128,9 +128,10 @@ fn main() -> Result<()> {
         args.build_type,
         args.preset,
         args.config,
-    );
+    )?;
 
-    let apps_config = config::AppsConfig::load().wrap_err("Failed to load apps.json!")?;
+    let apps_config = config::AppsConfig::load(&input_paths.dev_dir, &input_paths.build_dir)
+        .wrap_err("Failed to load apps.json!")?;
 
     match args.cmd {
         SubCommands::Build { app_names } => {
@@ -244,8 +245,6 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
         let solution = build.solution.clone().unwrap_or_else(|| {
             paths
                 .build_dir
-                .as_ref()
-                .unwrap()
                 .join("mwBuildAll.sln")
                 .to_str()
                 .unwrap()
@@ -279,7 +278,7 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
             println!("building:\n  projects: {}", &projects);
             Command::new("cmake")
                 .arg("--build")
-                .arg(paths.build_dir.as_ref().unwrap())
+                .arg(&paths.build_dir)
                 .arg("--config")
                 .arg(&paths.build_config)
                 .arg("--target")
