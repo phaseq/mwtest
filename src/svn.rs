@@ -12,7 +12,7 @@ fn update(
     check_svn_available()?;
 
     let (branch_url, dev_revision) = get_dev_branch_and_revision(&dev_dir, verbose)?;
-    let next_dev_revision = get_next_revision(&branch_url, dev_revision, verbose);
+    let next_dev_revision = get_next_revision(&branch_url, dev_revision, verbose)?;
     update_revision(
         &branch_url,
         next_dev_revision,
@@ -36,7 +36,7 @@ fn update_revision(
         println!("Selected revision: {}", next_dev_revision);
     }
 
-    let testcases_revision = detect_testcases_revision(&branch_url, next_dev_revision);
+    let testcases_revision = detect_testcases_revision(&branch_url, next_dev_revision)?;
 
     let mut wcs = vec![];
     for test_dir in itertools::sorted(testcase_relative_paths) {
@@ -63,7 +63,7 @@ fn checkout(
     check_svn_available()?;
 
     let (branch_url, dev_revision) = get_dev_branch_and_revision(&dev_dir, verbose)?;
-    let next_dev_revision = get_next_revision(&branch_url, dev_revision, verbose);
+    let next_dev_revision = get_next_revision(&branch_url, dev_revision, verbose)?;
     checkout_revision(
         &branch_url,
         next_dev_revision,
@@ -91,7 +91,7 @@ fn checkout_revision(
         println!("Selected revision: {}", next_dev_revision);
     }
 
-    let testcases_revision = detect_testcases_revision(&branch_url, next_dev_revision);
+    let testcases_revision = detect_testcases_revision(&branch_url, next_dev_revision)?;
 
     let mut depth = svn_depth(&testcase_root_dir, ".");
 
@@ -108,16 +108,16 @@ fn checkout_revision(
 
             depth = svn_depth(&testcase_root_dir, ".");
             if minimal {
-                remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose);
+                remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose)?;
             }
         }
-        Some(depth) => {
+        Some(_) => {
             if minimal {
                 // remove before switch to avoid unneded large switches
-                remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose);
+                remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose)?;
             }
             switch_workingcopies(
-                &vec![testcase_root_dir.to_owned()],
+                &[testcase_root_dir.to_owned()],
                 &testcase_root_dir,
                 &branch_url,
                 testcases_revision,
@@ -139,7 +139,7 @@ fn checkout_revision(
 }
 
 /// Check if dev is up to date. If not find the last revision before future dev commits.
-fn detect_testcases_revision(branch_url: &str, next_dev_revision: Revision) -> Revision {
+fn detect_testcases_revision(branch_url: &str, next_dev_revision: Revision) -> Result<Revision> {
     let mut testcases_revision = Revision::Head;
     if let Revision::Revision(rev) = next_dev_revision {
         // Only change HEAD, if we really have testcases commits after the guessed revision.
@@ -149,8 +149,8 @@ fn detect_testcases_revision(branch_url: &str, next_dev_revision: Revision) -> R
             next_dev_revision,
             Revision::Head,
             /*limit=*/ Some(1),
-        )
-        .log;
+        )?
+        .logentry;
         if !later_test_logs.is_empty() {
             testcases_revision = Revision::Revision(rev - 1);
             println!(concat!(
@@ -160,7 +160,7 @@ fn detect_testcases_revision(branch_url: &str, next_dev_revision: Revision) -> R
             ),)
         }
     }
-    testcases_revision
+    Ok(testcases_revision)
 }
 
 fn create_checkout_and_convert(
@@ -197,7 +197,7 @@ fn create_checkout_and_convert(
     }
 
     for wc in &nested_checkouts {
-        let status = status(&wc);
+        let status = status(&wc)?;
         let has_not_allowed_status = status.target.entry.iter().any(|t| {
             ["conflicted", "unversioned", "added", "deleted", "replaced"]
                 .contains(&t.wc_status.item.as_str())
@@ -216,20 +216,13 @@ fn create_checkout_and_convert(
     if verbose {
         println!("Creating sparse checkout {}", testcase_root_dir);
     }
-    if !Command::new("svn")
-        .args(&[
-            "checkout",
-            "--depth=empty",
-            "--force",
-            &format!("{}/testcases@{}", branch_url, revision),
-            testcase_root_dir,
-        ])
-        .status()
-        .unwrap()
-        .success()
-    {
-        panic!("svn failed");
-    }
+    svn(&[
+        "checkout",
+        "--depth=empty",
+        "--force",
+        &format!("{}/testcases@{}", branch_url, revision),
+        testcase_root_dir,
+    ])?;
 
     if !nested_checkouts.is_empty() {
         if verbose {
@@ -252,7 +245,7 @@ fn remove_unneded_testcases(
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
     verbose: bool,
-) {
+) -> Result<()> {
     let mut unneeded_paths = vec![];
 
     fn recursive_find_unneeded(
@@ -297,7 +290,7 @@ fn remove_unneded_testcases(
             if verbose {
                 print_svn_path(&path);
             }
-            let status = status(&path);
+            let status = status(&path)?;
             if !status.target.entry.is_empty() {
                 println!(
                     "Cannot remove {:?}, it contains changes or unversioned files",
@@ -314,6 +307,7 @@ fn remove_unneded_testcases(
             }
         }
     }
+    Ok(())
 }
 
 fn create_missing_testcases(
@@ -536,10 +530,11 @@ fn get_dev_branch_and_revision(dev_dir: &str, verbose: bool) -> Result<(String, 
     let dev_info = info(&dev_dir)?;
     let dev_info = dev_info.entry.unwrap();
     if !dev_info.relative_url.ends_with("/dev") {
-        panic!(
+        return Err(eyre!(
             "Invalid dev svn url: {}\nwhile checking {}",
-            dev_info.url, dev_dir
-        );
+            dev_info.url,
+            dev_dir
+        ));
     }
     let branch_url = &dev_info.url[0..dev_info.url.len() - 4];
     let relative_branch_url = &dev_info.relative_url[1..dev_info.relative_url.len() - 4]; // strip also ^ from start
@@ -561,7 +556,7 @@ fn get_dev_branch_and_revision(dev_dir: &str, verbose: bool) -> Result<(String, 
 }
 
 /// Returns next dev revision
-fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Revision {
+fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Result<Revision> {
     if verbose {
         println!("Checking {}", branch_url);
     }
@@ -571,8 +566,8 @@ fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Revi
         Revision::Revision(dev_revision + 1),
         Revision::Head,
         None,
-    )
-    .log;
+    )?
+    .logentry;
     let next_dev_revision = if dev_logs.is_empty() {
         Revision::Head
     } else {
@@ -587,7 +582,7 @@ fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Revi
         }
     }
 
-    next_dev_revision
+    Ok(next_dev_revision)
 }
 
 fn svn_depth(local_path: &str, cwd: &str) -> Option<String> {
@@ -605,7 +600,7 @@ fn svn_revisions(local_path: &str) -> Result<Vec<u32>> {
         .output()
         .unwrap();
     let output = std::str::from_utf8(&output.stdout).unwrap();
-    let mut revs = output.split(':');
+    let mut revs = output.trim().split(':');
     let r1 = revs.next().map(|r| r.parse());
     let r2 = revs.next().map(|r| r.parse());
     match (r1, r2) {
@@ -667,7 +662,7 @@ fn print_svn_path(mut path: &str) {
     println!("  - {}", path);
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum Revision {
     Head,
     Revision(u32),
@@ -706,16 +701,9 @@ struct WcStatus {
     item: String,
 }
 
-fn status(root: &str) -> Status {
-    let status = Command::new("svn")
-        .args(&["status", "--xml", root])
-        .output()
-        .expect("SVN failed!");
-    if !status.status.success() {
-        panic!("SVN failed!");
-    }
-    let output = std::str::from_utf8(&status.stdout).unwrap();
-    serde_xml_rs::from_str(output).unwrap()
+fn status(root: &str) -> Result<Status> {
+    let output = svn(&["status", "--xml", root])?;
+    Ok(serde_xml_rs::from_str(&output).unwrap())
 }
 
 #[derive(Deserialize, Debug)]
@@ -743,28 +731,27 @@ struct WcInfo {
 }
 
 fn info(root: &str) -> Result<Info> {
-    let output = Command::new("svn")
-        .args(&["info", "--xml", root])
-        .output()?;
-    if !output.status.success() {
-        return Err(eyre!("svn info failed!"));
-    }
-    let output = std::str::from_utf8(&output.stdout).unwrap();
-    Ok(serde_xml_rs::from_str(output)?)
+    let output = svn(&["info", "--xml", root])?;
+    Ok(serde_xml_rs::from_str(&output)?)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename = "log")]
 struct Log {
-    log: Vec<LogEntry>,
+    logentry: Vec<LogEntry>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename = "logentry")]
 struct LogEntry {
     revision: u32,
 }
 
-fn log(root: &str, revision_start: Revision, revision_end: Revision, limit: Option<u32>) -> Log {
+fn log(
+    root: &str,
+    revision_start: Revision,
+    revision_end: Revision,
+    limit: Option<u32>,
+) -> Result<Log> {
     let mut cmd = Command::new("svn");
     cmd.args(&[
         "log",
@@ -777,16 +764,37 @@ fn log(root: &str, revision_start: Revision, revision_end: Revision, limit: Opti
     if let Some(limit) = limit {
         cmd.args(&["-l", &format!("{}", limit)]);
     }
-    let output = cmd.output().expect("SVN failed!");
+    let output = cmd.output()?;
     if !output.status.success() {
-        panic!("SVN failed!");
+        if std::str::from_utf8(&output.stderr)
+            .unwrap()
+            .contains("E160006:")
+        {
+            // E160006: no such revision => return an empty list
+            return Ok(Log { logentry: vec![] });
+        }
+        return Err(eyre!("SVN log failed: {:?}", output));
     }
     let output = std::str::from_utf8(&output.stdout).unwrap();
-    serde_xml_rs::from_str(output).unwrap()
+    Ok(serde_xml_rs::from_str(output)?)
+}
+
+fn svn(args: &[&str]) -> Result<String> {
+    let output = Command::new("svn")
+        .args(args)
+        .output()
+        .wrap_err("Failed to start SVN")?;
+    let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    if !output.status.success() {
+        let stderr = std::str::from_utf8(&output.stderr).unwrap();
+        return Err(eyre!("Failed to run SVN: {}{}", stdout, stderr));
+    }
+    Ok(stdout.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
+    use color_eyre::eyre::Result;
     use serial_test::serial;
     use std::path::PathBuf;
     use std::process::Command;
@@ -824,9 +832,9 @@ mod tests {
             .success());
     }
 
-    fn checkout() {
+    fn checkout(path: &str) {
         assert!(Command::new("svn")
-            .args(&["checkout", DEV_URL, ROOT])
+            .args(&["checkout", path, ROOT])
             .status()
             .unwrap()
             .success());
@@ -843,23 +851,24 @@ mod tests {
     #[serial]
     fn svn_info() {
         setup();
-        checkout();
+        checkout(DEV_URL);
         assert_eq!(&super::info(&ROOT).unwrap().entry.unwrap().url, DEV_URL);
     }
 
     #[test]
     #[serial]
-    fn svn_status() {
+    fn svn_status() -> Result<()> {
         setup();
-        checkout();
+        checkout(DEV_URL);
         std::fs::write(PathBuf::from(ROOT).join("test.txt"), "").unwrap();
-        let entries = super::status(ROOT).target.entry;
+        let entries = super::status(ROOT)?.target.entry;
         let unversioned: Vec<_> = entries
             .iter()
             .filter(|entry| entry.wc_status.item == "unversioned")
             .collect();
         assert_eq!(1, unversioned.len());
         assert!(!unversioned[0].path.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -870,7 +879,67 @@ mod tests {
         checkout_empty();
         assert_eq!(super::svn_depth(ROOT, ".").as_deref(), Some("empty"));
         setup();
-        checkout();
+        checkout(DEV_URL);
         assert_eq!(super::svn_depth(ROOT, ".").as_deref(), Some("infinity"));
+    }
+
+    #[test]
+    #[serial]
+    fn svn_revision() {
+        setup();
+        assert!(super::svn_revision(ROOT).is_err());
+        checkout(DEV_URL);
+        assert!(super::svn_revision(ROOT).is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn svn_multiple_revisions() -> Result<()> {
+        setup();
+        checkout(TEST_URL);
+        let revision = super::svn_revision(ROOT)?;
+        assert_eq!(super::svn_revisions(ROOT)?, vec![revision]);
+
+        let subfolder_path = PathBuf::from(ROOT).join(TEST_FOLDERS[0]);
+        super::svn(&[
+            "update",
+            &subfolder_path.to_str().unwrap(),
+            "-r",
+            &format!("{}", revision - 1),
+        ])?;
+        assert_eq!(super::svn_revisions(ROOT)?, vec![revision - 1, revision]);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn svn_branch_info() -> Result<()> {
+        setup();
+        checkout(DEV_URL);
+
+        // Rely on svn mockup repo:
+        // 819767 -> dev commit
+        // 819768 -> other commit
+        // 819769 -> dev commit
+        super::svn(&["update", ROOT, "-r", "819767"])?;
+
+        let (branch, revision) = super::get_dev_branch_and_revision(ROOT, false)?;
+        let next_revision = super::get_next_revision(&branch, revision, false)?;
+
+        assert_eq!(branch, BRANCH_URL);
+        // self.assertEqual(revision, 819767)
+        assert_eq!(next_revision, super::Revision::Revision(819769));
+
+        super::svn(&["update", ROOT])?;
+
+        let (branch, revision) = super::get_dev_branch_and_revision(ROOT, false)?;
+        let next_revision = super::get_next_revision(&branch, revision, false)?;
+        assert_eq!(next_revision, super::Revision::Head);
+
+        setup();
+        checkout(TEST_URL);
+        assert!(super::get_dev_branch_and_revision(ROOT, false).is_err());
+        //let next_revision = super::get_next_revision(&branch, revision, false)?;
+        Ok(())
     }
 }
