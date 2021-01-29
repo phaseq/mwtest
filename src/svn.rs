@@ -40,7 +40,7 @@ fn update_revision(
 
     let mut wcs = vec![];
     for test_dir in itertools::sorted(testcase_relative_paths) {
-        wcs.append(&mut svn_find_workingcopies(&testcase_root_dir, &test_dir));
+        wcs.append(&mut svn_find_workingcopies(&testcase_root_dir, &test_dir)?);
     }
     switch_workingcopies(
         &wcs,
@@ -97,15 +97,14 @@ fn checkout_revision(
 
     match &depth {
         None => {
-            if !create_checkout_and_convert(
+            create_checkout_and_convert(
                 &testcase_root_dir,
                 &branch_url,
                 testcases_revision,
                 force_conversion,
                 verbose,
-            ) {
-                return Err(eyre!("Failed to create checkout"));
-            }
+            )
+            .wrap_err("Failed to create checkout")?;
 
             depth = svn_depth(&testcase_root_dir, ".");
             if minimal {
@@ -170,15 +169,14 @@ fn create_checkout_and_convert(
     revision: Revision,
     force_conversion: bool,
     verbose: bool,
-) -> bool {
-    let nested_checkouts = svn_find_workingcopies(&testcase_root_dir, ".");
+) -> Result<()> {
+    let nested_checkouts = svn_find_workingcopies(&testcase_root_dir, ".")?;
     if !nested_checkouts.is_empty() {
         if !force_conversion {
-            println!(concat!(
+            return Err(eyre!(concat!(
                 "Aborting because of existing checkouts in testcases. ",
                 "Use --force to convert them to a single sparse checkout."
-            ));
-            return false;
+            )));
         }
 
         if verbose {
@@ -200,19 +198,18 @@ fn create_checkout_and_convert(
 
     for wc in &nested_checkouts {
         let status = status(&wc);
-        let has_not_allowed_status = status.target.iter().any(|t| {
+        let has_not_allowed_status = status.target.entry.iter().any(|t| {
             ["conflicted", "unversioned", "added", "deleted", "replaced"]
                 .contains(&t.wc_status.item.as_str())
         });
         if has_not_allowed_status {
-            println!(
+            return Err(eyre!(
                 concat!(
                     "Can't proceed because of uncommitted changes in '{}'. ",
                     "Please solve those manually or delete the whole testcases folder."
                 ),
                 wc
-            );
-            return false;
+            ));
         }
     }
 
@@ -248,7 +245,7 @@ fn create_checkout_and_convert(
             svn_make_sparse(&testcase_root_dir, &wc_relpath, revision);
         }
     }
-    true
+    Ok(())
 }
 
 fn remove_unneded_testcases(
@@ -301,7 +298,7 @@ fn remove_unneded_testcases(
                 print_svn_path(&path);
             }
             let status = status(&path);
-            if !status.target.is_empty() {
+            if !status.target.entry.is_empty() {
                 println!(
                     "Cannot remove {:?}, it contains changes or unversioned files",
                     path
@@ -442,11 +439,11 @@ fn svn_make_sparse(root: &str, path: &str, revision: Revision) {
 
 /// Traverses recursively through subdirectories, if no svn working copy found.
 /// Validates working copies
-fn svn_find_workingcopies(root: &str, relpath: &str) -> Vec<String> {
+fn svn_find_workingcopies(root: &str, relpath: &str) -> Result<Vec<String>> {
     let mut relpath_to_wcs = vec![];
     let abs_path = PathBuf::from(root).join(relpath);
     if abs_path.exists() {
-        let svn_info = info(&abs_path.to_str().unwrap().replace('\\', "/"));
+        let svn_info = info(&abs_path.to_str().unwrap().replace('\\', "/"))?;
         if !path_endswith(&svn_info.entry.as_ref().unwrap().url, relpath) {
             println!(
                 "Ignoring unexpected subdirectories in svn url {}. Does not fit to {}",
@@ -454,7 +451,7 @@ fn svn_find_workingcopies(root: &str, relpath: &str) -> Vec<String> {
                 relpath
             );
         } else {
-            relpath_to_wcs.push(svn_info.entry.as_ref().unwrap().wc_root_path.clone());
+            relpath_to_wcs.push(svn_info.entry.as_ref().unwrap().wc_info.depth.clone());
         }
         // # Only if the current path is not an svn checkout we search in subdirs.
         // # This misses nested svn checkouts, which is possible but unlikely to happen.
@@ -466,7 +463,7 @@ fn svn_find_workingcopies(root: &str, relpath: &str) -> Vec<String> {
         //                 root, relpath + "/" + subdir
         //             )
     }
-    relpath_to_wcs
+    Ok(relpath_to_wcs)
 }
 
 fn delete_svn_index(working_copy_path: &str) {
@@ -536,7 +533,7 @@ fn get_dev_branch_and_revision(dev_dir: &str, verbose: bool) -> Result<(String, 
         println!("Checking {}", dev_dir);
     }
 
-    let dev_info = info(&dev_dir);
+    let dev_info = info(&dev_dir)?;
     let dev_info = dev_info.entry.unwrap();
     if !dev_info.relative_url.ends_with("/dev") {
         panic!(
@@ -594,7 +591,7 @@ fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Revi
 }
 
 fn svn_depth(local_path: &str, cwd: &str) -> Option<String> {
-    info(&local_path).entry.map(|e| e.depth)
+    Some(info(&local_path).ok()?.entry?.wc_info.depth)
 }
 
 fn svn_revision(local_path: &str) -> Result<u32> {
@@ -632,7 +629,7 @@ fn check_svn_available() -> Result<()> {
     let re = regex::Regex::new(r"version (\d+)\.(\d+)").unwrap();
     match re.captures(output) {
         Some(cap) => {
-            let (major, minor) = (cap[0].parse().unwrap(), cap[1].parse().unwrap());
+            let (major, minor) = (cap[1].parse().unwrap(), cap[2].parse().unwrap());
             if (major, minor) >= (1, 6) {
                 Ok(())
             } else {
@@ -684,13 +681,19 @@ impl std::fmt::Display for Revision {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename = "status")]
 struct Status {
-    target: Vec<StatusEntry>,
+    target: StatusTarget,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
+#[serde(rename = "entry")]
+struct StatusTarget {
+    entry: Vec<StatusEntry>,
+}
+
+#[derive(Deserialize, Debug)]
 #[serde(rename = "entry")]
 struct StatusEntry {
     path: String,
@@ -698,7 +701,7 @@ struct StatusEntry {
     wc_status: WcStatus,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct WcStatus {
     item: String,
 }
@@ -715,33 +718,39 @@ fn status(root: &str) -> Status {
     serde_xml_rs::from_str(output).unwrap()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename = "info")]
 struct Info {
     entry: Option<InfoEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename = "entry")]
 struct InfoEntry {
     url: String,
     #[serde(rename = "relative-url")]
     relative_url: String,
-    depth: String,
-    #[serde(rename = "wcroot-abspath")]
-    wc_root_path: String,
+    #[serde(rename = "wc-info")]
+    wc_info: WcInfo,
 }
 
-fn info(root: &str) -> Info {
+#[derive(Deserialize, Debug)]
+#[serde(rename = "wc-info")]
+struct WcInfo {
+    #[serde(rename = "wcroot-abspath")]
+    wc_root_path: Option<String>,
+    depth: String,
+}
+
+fn info(root: &str) -> Result<Info> {
     let output = Command::new("svn")
         .args(&["info", "--xml", root])
-        .output()
-        .expect("SVN failed!");
+        .output()?;
     if !output.status.success() {
-        panic!("SVN failed!");
+        return Err(eyre!("svn info failed!"));
     }
     let output = std::str::from_utf8(&output.stdout).unwrap();
-    serde_xml_rs::from_str(output).unwrap()
+    Ok(serde_xml_rs::from_str(output)?)
 }
 
 #[derive(Deserialize)]
@@ -774,4 +783,94 @@ fn log(root: &str, revision_start: Revision, revision_end: Revision, limit: Opti
     }
     let output = std::str::from_utf8(&output.stdout).unwrap();
     serde_xml_rs::from_str(output).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    const ROOT: &str = "test/svn with spaces";
+    const BRANCH_URL: &str =
+        "https://svn.moduleworks.com/ModuleWorks/trunk/testprojects/mwtest%20svn-mockup";
+    const DEV_URL: &str =
+        "https://svn.moduleworks.com/ModuleWorks/trunk/testprojects/mwtest%20svn-mockup/dev";
+    const TEST_URL: &str =
+        "https://svn.moduleworks.com/ModuleWorks/trunk/testprojects/mwtest%20svn-mockup/testcases";
+    const TEST_FOLDERS: [&str; 3] = ["sample-test-dir1", "sample-test-dir2", "sample with spaces"];
+    const TEST_SAMPLES: [&str; 4] = [
+        "sample-test-dir1",
+        "sample-test-dir2",
+        "sample with spaces",
+        "sample-test.txt",
+    ];
+    const NESTED_TEST_FILE: &str = "sample-test-dir1/sample-test.txt";
+    const TRUNK_URL: &str = "https://svn.moduleworks.com/ModuleWorks/trunk";
+
+    fn setup() {
+        println!("cleaning {}", ROOT);
+        if PathBuf::from(ROOT).exists() {
+            std::fs::remove_dir_all(ROOT).unwrap();
+        }
+        std::fs::create_dir_all(ROOT).unwrap();
+    }
+
+    fn checkout_empty() {
+        assert!(Command::new("svn")
+            .args(&["checkout", "--depth=empty", DEV_URL, ROOT])
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    fn checkout() {
+        assert!(Command::new("svn")
+            .args(&["checkout", DEV_URL, ROOT])
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    #[test]
+    #[serial]
+    fn svn_available() {
+        setup();
+        assert!(super::check_svn_available().is_ok())
+    }
+
+    #[test]
+    #[serial]
+    fn svn_info() {
+        setup();
+        checkout();
+        assert_eq!(&super::info(&ROOT).unwrap().entry.unwrap().url, DEV_URL);
+    }
+
+    #[test]
+    #[serial]
+    fn svn_status() {
+        setup();
+        checkout();
+        std::fs::write(PathBuf::from(ROOT).join("test.txt"), "").unwrap();
+        let entries = super::status(ROOT).target.entry;
+        let unversioned: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.wc_status.item == "unversioned")
+            .collect();
+        assert_eq!(1, unversioned.len());
+        assert!(!unversioned[0].path.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn svn_depth() {
+        setup();
+        assert!(super::svn_depth(ROOT, ".").is_none());
+        checkout_empty();
+        assert_eq!(super::svn_depth(ROOT, ".").as_deref(), Some("empty"));
+        setup();
+        checkout();
+        assert_eq!(super::svn_depth(ROOT, ".").as_deref(), Some("infinity"));
+    }
 }

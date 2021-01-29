@@ -507,6 +507,7 @@ mod tests {
             gtest_generator: None,
             execution_style: ExecutionStyle::Parallel,
             timeout: None,
+            accepted_returncodes: vec![0],
             tests: vec![test],
         }]
     }
@@ -530,6 +531,7 @@ mod tests {
             gtest_generator: None,
             execution_style: ExecutionStyle::Parallel,
             timeout: None,
+            accepted_returncodes: vec![0],
             tests: vec![test],
         }]
     }
@@ -553,6 +555,7 @@ mod tests {
             gtest_generator: Some(test),
             execution_style: ExecutionStyle::Parallel,
             timeout: None,
+            accepted_returncodes: vec![0],
             tests: vec![], // TODO
         }]
     }
@@ -781,6 +784,7 @@ Some prefix
             gtest_generator: None,
             execution_style: ExecutionStyle::Parallel,
             timeout,
+            accepted_returncodes: vec![0],
             tests: vec![TestInstanceCreator {
                 test_id: crate::TestId {
                     id: format!("{:?}", timeout),

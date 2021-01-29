@@ -29,6 +29,9 @@ features = ["net", "process", "io-util", "rt", "rt-multi-thread", "time", "macro
 name = "xge_lib"
 path = "lib/xge_lib.rs"
 
+[dev-dependencies]
+serial_test = "0.5.1"
+
 #[profile.release]
 #lto = true
 #opt-level = 'z'
