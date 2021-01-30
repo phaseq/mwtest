@@ -581,7 +581,7 @@ mod tests {
     }
 
     fn count_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
-        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CountingReport::new()));
         let success = runtime.block_on(async {
             /*let ctrl_c = tokio::signal::ctrl_c();
@@ -596,7 +596,7 @@ mod tests {
     }
 
     fn count_results_xge(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, usize) {
-        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let mut report = CountingReport::new();
         let success =
             runtime.block_on(async { run_xge(tests, &run_config, &mut report, true).await });
@@ -624,7 +624,7 @@ mod tests {
     }
 
     fn collect_results(tests: Vec<TestGroup>, run_config: RunConfig) -> (bool, Vec<String>) {
-        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CollectingReport::new()));
         let success =
             runtime.block_on(async { run_local(tests, &run_config, report.clone()).await });
@@ -633,7 +633,7 @@ mod tests {
     }
 
     fn collect_results_gtest(test: TestInstance) -> (bool, Vec<String>) {
-        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
+        let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
         let report = Arc::new(Mutex::new(CollectingReport::new()));
         let success = runtime.block_on(async { run_gtest(test, "app_name", report.clone()).await });
         let ids = report.lock().unwrap().ids.clone();

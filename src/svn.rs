@@ -1,9 +1,10 @@
 use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
+use relative_path::{RelativePath, RelativePathBuf};
 use serde_derive::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn update(
+pub fn update(
     dev_dir: &str,
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
@@ -42,17 +43,18 @@ fn update_revision(
     for test_dir in itertools::sorted(testcase_relative_paths) {
         wcs.append(&mut svn_find_workingcopies(&testcase_root_dir, &test_dir)?);
     }
+    dbg!(&wcs);
     switch_workingcopies(
         &wcs,
         &testcase_root_dir,
         &branch_url,
         testcases_revision,
         verbose,
-    );
+    )?;
     Ok(())
 }
 
-fn checkout(
+pub fn checkout(
     dev_dir: &str,
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
@@ -75,7 +77,7 @@ fn checkout(
     )
 }
 
-fn checkout_revision(
+pub fn checkout_revision(
     branch_url: &str,
     next_dev_revision: Revision,
     testcase_root_dir: &str,
@@ -108,13 +110,13 @@ fn checkout_revision(
 
             depth = svn_depth(&testcase_root_dir, ".");
             if minimal {
-                remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose)?;
+                remove_unneeded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose)?;
             }
         }
         Some(_) => {
             if minimal {
                 // remove before switch to avoid unneded large switches
-                remove_unneded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose)?;
+                remove_unneeded_testcases(&testcase_root_dir, &testcase_relative_paths, verbose)?;
             }
             switch_workingcopies(
                 &[testcase_root_dir.to_owned()],
@@ -122,7 +124,7 @@ fn checkout_revision(
                 &branch_url,
                 testcases_revision,
                 verbose,
-            );
+            )?;
         }
     }
 
@@ -132,7 +134,7 @@ fn checkout_revision(
             &testcase_relative_paths,
             testcases_revision,
             verbose,
-        );
+        )?;
     }
 
     Ok(())
@@ -193,7 +195,7 @@ fn create_checkout_and_convert(
             &branch_url,
             revision,
             verbose,
-        );
+        )?;
     }
 
     for wc in &nested_checkouts {
@@ -235,13 +237,13 @@ fn create_checkout_and_convert(
             }
             delete_svn_index(&wc_path);
             // TODO: do nested checkouts always have depth=infinity?
-            svn_make_sparse(&testcase_root_dir, &wc_relpath, revision);
+            svn_make_sparse(&testcase_root_dir, &wc_relpath, revision)?;
         }
     }
     Ok(())
 }
 
-fn remove_unneded_testcases(
+fn remove_unneeded_testcases(
     testcase_root_dir: &str,
     testcase_relative_paths: &[String],
     verbose: bool,
@@ -255,12 +257,19 @@ fn remove_unneded_testcases(
         mut unneeded_paths: &mut Vec<String>,
     ) {
         let abs_path = testcase_root_dir.join(path);
-        if !abs_path.exists() || path.to_str().unwrap() == ".svn" || path.ends_with("/.svn") {
+        if !abs_path.exists() || path.file_name().map(|n| n == ".svn").unwrap_or(false) {
             return;
         }
-        if !testcase_relative_paths.iter().any(|p| path.ends_with(p)) {
+        if !testcase_relative_paths
+            .iter()
+            .any(|p| subpath_of(p.to_str().unwrap(), path.to_str().unwrap()))
+        {
             unneeded_paths.push(path.to_str().unwrap().to_string());
-        } else if !testcase_relative_paths.iter().any(|p| p.ends_with(path)) && !abs_path.is_dir() {
+        } else if !testcase_relative_paths
+            .iter()
+            .any(|p| subpath_of(path.to_str().unwrap(), p.to_str().unwrap()))
+            && abs_path.is_dir()
+        {
             for f in std::fs::read_dir(abs_path).unwrap() {
                 recursive_find_unneeded(
                     &path.join(f.unwrap().path().file_name().unwrap()),
@@ -296,14 +305,11 @@ fn remove_unneded_testcases(
                     "Cannot remove {:?}, it contains changes or unversioned files",
                     path
                 );
-            } else if !Command::new("svn")
-                .args(&["update", "--set-depth=exclude", &path])
-                .current_dir(&testcase_root_dir)
-                .status()
-                .unwrap()
-                .success()
-            {
-                panic!("svn failed!");
+            } else {
+                svn_wd(
+                    &["update", "--set-depth=exclude", &path],
+                    &testcase_root_dir,
+                )?;
             }
         }
     }
@@ -315,7 +321,7 @@ fn create_missing_testcases(
     testcase_relative_paths: &[String],
     revision: Revision,
     verbose: bool,
-) {
+) -> Result<()> {
     let mut missing_paths = vec![];
     for test_path in testcase_relative_paths {
         if svn_depth(test_path, testcase_root_dir).as_deref() != Some("infinity") {
@@ -331,9 +337,10 @@ fn create_missing_testcases(
             if verbose {
                 print_svn_path(&test_path);
             }
-            svn_make_sparse(&testcase_root_dir, &test_path, revision);
+            svn_make_sparse(&testcase_root_dir, &test_path, revision)?;
         }
     }
+    Ok(())
 }
 
 fn switch_workingcopies(
@@ -342,7 +349,7 @@ fn switch_workingcopies(
     branch_url: &str,
     revision: Revision,
     verbose: bool,
-) {
+) -> Result<()> {
     if verbose {
         println!("Switching {} to {}", testcases_root_path, revision);
     }
@@ -361,27 +368,21 @@ fn switch_workingcopies(
             }
             let target_url =
                 svn_resolve_relpath(&(branch_url.to_owned() + "/testcases"), &wc_relpath);
-            let result = Command::new("svn")
-                .args(&[
-                    "switch",
-                    "--accept=postpone",
-                    &format!("{}@{}", target_url, revision),
-                    &wc,
-                ])
-                .output()
-                .unwrap();
-            if !result.status.success() {
-                panic!("svn failed");
-            }
-            let result = std::str::from_utf8(&result.stdout).unwrap();
-            if svn_had_conflicts(result) {
+            let result = svn(&[
+                "switch",
+                "--accept=postpone",
+                &format!("{}@{}", target_url, revision),
+                &wc,
+            ])?;
+            if svn_had_conflicts(&result) {
                 println!("conflict in {}. Please use svn to resolve it!", wc);
             }
         }
     }
+    Ok(())
 }
 
-fn svn_make_sparse(root: &str, path: &str, revision: Revision) {
+fn svn_make_sparse(root: &str, path: &str, revision: Revision) -> Result<()> {
     let path_list = path_to_list(path);
     for i in 0..path_list.len() {
         let sub_path = itertools::join(&path_list[0..=i], "/");
@@ -405,30 +406,24 @@ fn svn_make_sparse(root: &str, path: &str, revision: Revision) {
             }
         };
         if needs_update {
-            if !Command::new("svn")
-                .args(&[
-                    "update",
-                    &format!("--set-depth={}", needed_depth),
-                    "--force",
-                    "--accept=postpone",
-                    &sub_path,
-                    "--revision",
-                    &revision.to_string(),
-                ])
-                .current_dir(root)
-                .status()
-                .expect("SVN failed!")
-                .success()
-            {
-                std::process::exit(1)
-            }
+            let abs_path = format!("{}/{}", root, sub_path);
+            svn(&[
+                "update",
+                &format!("--set-depth={}", needed_depth),
+                "--force",
+                "--accept=postpone",
+                "--revision",
+                &revision.to_string(),
+                &abs_path,
+            ])?;
+
             // svn update silently does nothing if an url does not exist.
             // => Check if something was created locally
-            if svn_depth(&sub_path, root).is_none() {
-                panic!("Path does not exist in SVN. Did you pass the correct test id?");
-            }
+            svn_depth(&abs_path, root)
+                .wrap_err("Path does not exist in SVN. Did you pass the correct test id?")?;
         }
     }
+    Ok(())
 }
 
 /// Traverses recursively through subdirectories, if no svn working copy found.
@@ -491,19 +486,20 @@ fn path_to_list(path: &str) -> Vec<String> {
     // TODO: will not work for '..' in the path
     let mut list: Vec<_> = path
         .replace('\\', "/")
+        .replace("%20", " ")
         .split('/')
         .filter(|t| *t != ".")
         .map(|t| t.to_string())
         .collect();
-    if !list.is_empty() {
+    if list.last().map(|s| s.as_str()) == Some("") {
         list.pop();
     }
     list
 }
 
 fn path_endswith(path: &str, endpath: &str) -> bool {
-    let mut split_path = path_to_list(path);
-    let mut split_endpath = path_to_list(endpath);
+    let split_path = path_to_list(path);
+    let split_endpath = path_to_list(endpath);
     if split_endpath.is_empty() {
         return true;
     }
@@ -515,16 +511,38 @@ fn path_endswith(path: &str, endpath: &str) -> bool {
     r1.zip(r2).all(|(t1, t2)| t1 == t2)
 }
 
-fn svn_relpath(local_path: &str, local_base_path: &str) -> String {
-    let local_path = PathBuf::from(local_path);
-    let relpath = local_path.strip_prefix(local_base_path).unwrap();
-    relpath.to_str().unwrap().replace('\\', "/")
+fn subpath_of(subpath: &str, path: &str) -> bool {
+    let relpath = RelativePath::new(path).relative(RelativePath::new(subpath));
+    let relpath = relpath.as_str();
+    relpath == "." || !relpath.starts_with("..")
+}
+
+fn svn_relpath(to: &str, from: &str) -> String {
+    /*let mut from = PathBuf::from(from);
+    let mut to = PathBuf::from(to);
+    if from.is_absolute() {
+        from = from
+            .strip_prefix(std::env::current_dir().unwrap())
+            .unwrap()
+            .to_path_buf();
+    }
+    if to.is_absolute() {
+        to = to
+            .strip_prefix(std::env::current_dir().unwrap())
+            .unwrap()
+            .to_path_buf();
+    }*/
+    let from = RelativePathBuf::from(from.replace('\\', "/"));
+    let to = RelativePathBuf::from(to.replace('\\', "/"));
+
+    let relpath = from.relative(to);
+    relpath.as_str().to_owned()
 }
 
 /// E.g. /A/B/C, ../../D becomes /A/D
 fn svn_resolve_relpath(url: &str, relpath: &str) -> String {
     let mut url_list = path_to_list(url);
-    let mut relpath_list = path_to_list(relpath);
+    let relpath_list = path_to_list(relpath);
     for subdir in relpath_list.into_iter() {
         if subdir == "." {
             continue;
@@ -541,7 +559,7 @@ fn svn_resolve_relpath(url: &str, relpath: &str) -> String {
 }
 
 /// Returns svn branch url and revision of local dev working copy
-fn get_dev_branch_and_revision(dev_dir: &str, verbose: bool) -> Result<(String, u32)> {
+pub fn get_dev_branch_and_revision(dev_dir: &str, verbose: bool) -> Result<(String, u32)> {
     if verbose {
         println!("Checking {}", dev_dir);
     }
@@ -604,7 +622,7 @@ fn get_next_revision(branch_url: &str, dev_revision: u32, verbose: bool) -> Resu
     Ok(next_dev_revision)
 }
 
-fn svn_depth(local_path: &str, cwd: &str) -> Option<String> {
+fn svn_depth(local_path: &str, _cwd: &str) -> Option<String> {
     Some(info(&local_path).ok()?.entry?.wc_info.depth)
 }
 
@@ -619,7 +637,7 @@ fn svn_revisions(local_path: &str) -> Result<Vec<u32>> {
         .output()
         .unwrap();
     let output = std::str::from_utf8(&output.stdout).unwrap();
-    let mut revs = output.trim().split(':');
+    let mut revs = output.trim_matches(|c: char| !c.is_numeric()).split(':');
     let r1 = revs.next().map(|r| r.parse());
     let r2 = revs.next().map(|r| r.parse());
     match (r1, r2) {
@@ -675,14 +693,14 @@ fn print_svn_path(mut path: &str) {
     if path.starts_with("./") {
         path = &path[2..];
     };
-    if path.ends_with("/") {
+    if path.ends_with('/') {
         path = &path[..path.len() - 1];
     }
     println!("  - {}", path);
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum Revision {
+pub enum Revision {
     Head,
     Revision(u32),
 }
@@ -704,6 +722,7 @@ struct Status {
 #[derive(Deserialize, Debug)]
 #[serde(rename = "entry")]
 struct StatusTarget {
+    #[serde(default)]
     entry: Vec<StatusEntry>,
 }
 
@@ -770,6 +789,7 @@ fn info(root: &str) -> Result<Info> {
 #[derive(Deserialize, Debug)]
 #[serde(rename = "log")]
 struct Log {
+    #[serde(default)]
     logentry: Vec<LogEntry>,
 }
 #[derive(Deserialize, Debug)]
@@ -823,6 +843,19 @@ fn svn(args: &[&str]) -> Result<String> {
     Ok(stdout.to_owned())
 }
 
+fn svn_wd(args: &[&str], wd: &str) -> Result<String> {
+    let output = Command::new("svn")
+        .args(args)
+        .current_dir(wd)
+        .output()
+        .wrap_err("Failed to start SVN")?;
+    let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    if !output.status.success() {
+        return Err(eyre!("Failed to run SVN: {:?}\n{:?}", args, output));
+    }
+    Ok(stdout.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use color_eyre::eyre::Result;
@@ -845,7 +878,6 @@ mod tests {
         "sample-test.txt",
     ];
     const NESTED_TEST_FILE: &str = "sample-test-dir1/sample-test.txt";
-    const TRUNK_URL: &str = "https://svn.moduleworks.com/ModuleWorks/trunk";
 
     fn setup() {
         println!("cleaning {}", ROOT);
@@ -855,9 +887,9 @@ mod tests {
         std::fs::create_dir_all(ROOT).unwrap();
     }
 
-    fn checkout_empty() {
+    fn checkout_empty(path: &str) {
         assert!(Command::new("svn")
-            .args(&["checkout", "--depth=empty", DEV_URL, ROOT])
+            .args(&["checkout", "--depth=empty", path, ROOT])
             .status()
             .unwrap()
             .success());
@@ -907,7 +939,7 @@ mod tests {
     fn svn_depth() {
         setup();
         assert!(super::svn_depth(ROOT, ".").is_none());
-        checkout_empty();
+        checkout_empty(DEV_URL);
         assert_eq!(super::svn_depth(ROOT, ".").as_deref(), Some("empty"));
         setup();
         checkout(DEV_URL);
@@ -958,7 +990,7 @@ mod tests {
         let next_revision = super::get_next_revision(&branch, revision, false)?;
 
         assert_eq!(branch, BRANCH_URL);
-        // self.assertEqual(revision, 819767)
+        // assertEqual(revision, 819767)
         assert_eq!(next_revision, super::Revision::Revision(819769));
 
         super::svn(&["update", ROOT])?;
@@ -1020,5 +1052,322 @@ mod tests {
         ])
         .unwrap();
         super::svn_find_workingcopies(ROOT, ".").unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn svn_make_sparse() {
+        setup();
+        checkout_empty(TEST_URL);
+
+        super::svn_make_sparse(ROOT, NESTED_TEST_FILE, super::Revision::Head).unwrap();
+        assert!(PathBuf::from(ROOT).join(NESTED_TEST_FILE).exists());
+
+        assert!(super::svn_make_sparse(
+            ROOT,
+            "asdasd/asdasd/asdklasjdlkasjdk",
+            super::Revision::Head
+        )
+        .is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn switch_workingcopies() {
+        setup();
+
+        // should not throw for no tests
+        super::switch_workingcopies(&[], ROOT, "", super::Revision::Revision(0), false).unwrap();
+
+        checkout(TEST_URL);
+        let initial_revision = super::svn_revision(ROOT).unwrap();
+        let new_revision = super::Revision::Revision(initial_revision - 1);
+        let root = PathBuf::from(ROOT)
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        super::switch_workingcopies(&[root.clone()], &root, BRANCH_URL, new_revision, false)
+            .unwrap();
+        assert_eq!(
+            super::Revision::Revision(super::svn_revision(ROOT).unwrap()),
+            new_revision
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn create_checkout_and_convert() {
+        setup();
+
+        let abs_test_dir = ROOT.to_owned() + "/" + TEST_FOLDERS[0];
+        let test_url = TEST_URL.to_owned() + "/" + TEST_FOLDERS[0];
+        super::svn(&["checkout", &test_url, &abs_test_dir]).unwrap();
+
+        let revision = super::svn_revision(&abs_test_dir).unwrap();
+        let root = PathBuf::from(ROOT)
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let force = true;
+        super::create_checkout_and_convert(
+            &root,
+            BRANCH_URL,
+            super::Revision::Revision(revision),
+            force,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(super::svn_revision(ROOT).unwrap(), revision);
+        assert!(PathBuf::from(&abs_test_dir).exists());
+        assert!(!PathBuf::from(&abs_test_dir).join(".svn").exists());
+        let num_files = std::fs::read_dir(abs_test_dir).unwrap().count();
+        assert_ne!(num_files, 0);
+    }
+
+    #[test]
+    #[serial]
+    fn create_missing_testcases() {
+        setup();
+        checkout_empty(TEST_URL);
+        let root = PathBuf::from(ROOT)
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let test_samples: Vec<String> = TEST_SAMPLES.iter().map(|s| s.to_string()).collect();
+        super::create_missing_testcases(&root, &test_samples, super::Revision::Head, true).unwrap();
+        for test in &TEST_SAMPLES {
+            assert!(PathBuf::from(ROOT).join(test).exists());
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_checkout() {
+        setup();
+        let dev_dir = ROOT.to_owned() + "/dev";
+        let test_dir = ROOT.to_owned() + "/testcases";
+        super::svn(&["checkout", DEV_URL, &dev_dir]).unwrap();
+        let dev_revision = super::svn_revision(&dev_dir).unwrap();
+
+        for _ in 0..2 {
+            let force = true;
+            let test_samples: Vec<String> = TEST_SAMPLES.iter().map(|s| s.to_string()).collect();
+            super::checkout(&dev_dir, &test_dir, &test_samples, force, false, false).unwrap();
+            for test in &TEST_SAMPLES {
+                assert!(
+                    super::svn_revision(&(test_dir.clone() + "/" + test)).unwrap() >= dev_revision
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_update() {
+        setup();
+        let dev_dir = ROOT.to_owned() + "/dev";
+        super::svn(&["checkout", "--depth=empty", DEV_URL, &dev_dir]).unwrap();
+        let dev_revision = super::svn_revision(&dev_dir).unwrap();
+
+        let test_dir = ROOT.to_owned() + "/testcases";
+        let test_sample = &TEST_SAMPLES[0];
+        super::svn(&[
+            "checkout",
+            "--depth=empty",
+            &(TEST_URL.to_owned() + "/" + test_sample),
+            &(test_dir.clone() + "/" + test_sample),
+        ])
+        .unwrap();
+
+        let test_sample_relurl = "testcases/".to_owned() + test_sample;
+        super::svn_wd(
+            &[
+                "update",
+                &test_sample_relurl,
+                "--revision",
+                &format!("{}", dev_revision - 1),
+            ],
+            ROOT,
+        )
+        .unwrap();
+        let test_sample_url = ROOT.to_owned() + "/" + &test_sample_relurl;
+        assert!(super::svn_revision(&test_sample_url).unwrap() < dev_revision);
+
+        for i in 0..1 {
+            super::update(&dev_dir, &test_dir, &[test_sample.to_string()], false).unwrap();
+            assert!(super::svn_revision(&test_sample_url).unwrap() >= dev_revision);
+            if i == 0 {
+                // In second pass check with a converted repository
+                super::create_checkout_and_convert(
+                    &test_dir,
+                    BRANCH_URL,
+                    super::Revision::Revision(dev_revision),
+                    true,
+                    false,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn complete_branch_checkout() {
+        setup();
+        checkout_empty(BRANCH_URL);
+        let root = PathBuf::from(ROOT).canonicalize().unwrap();
+        let dev_dir = root.join("dev");
+        let dev_dir = dev_dir.to_str().unwrap();
+        let test_dir = root.join("testcases");
+        let test_dir = test_dir.to_str().unwrap();
+        super::svn_wd(&["update", "--set-depth=empty", "dev"], ROOT).unwrap();
+        println!("{:?}", dev_dir);
+        let revision = super::svn_revision(&dev_dir).unwrap();
+        super::svn_wd(
+            &[
+                "update",
+                "--set-depth=empty",
+                "-r",
+                &format!("{}", revision - 1),
+                "testcases",
+            ],
+            ROOT,
+        )
+        .unwrap();
+
+        super::update(&dev_dir, &test_dir, &[".".to_owned()], false).unwrap();
+        assert!(super::svn_revision(&test_dir).unwrap() >= revision);
+
+        let test_samples: Vec<String> = TEST_SAMPLES.iter().map(|s| s.to_string()).collect();
+        super::checkout(dev_dir, test_dir, &test_samples, true, false, false).unwrap();
+        for test in &TEST_SAMPLES {
+            assert!(PathBuf::from(test_dir).join(test).exists());
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn remove_unneeded_testcases() {
+        setup();
+        checkout_empty(TEST_URL);
+        for test in &TEST_SAMPLES {
+            super::svn_make_sparse(ROOT, test, super::Revision::Head).unwrap();
+        }
+        let some_testfolder = &TEST_FOLDERS[0];
+        let some_testfolder_path = ROOT.to_owned() + "/" + some_testfolder;
+        assert!(PathBuf::from(&some_testfolder_path).exists());
+        assert!(std::fs::read_dir(&some_testfolder_path).unwrap().count() > 0);
+
+        super::remove_unneeded_testcases(ROOT, &[some_testfolder.to_string()], false).unwrap();
+        assert!(PathBuf::from(&some_testfolder_path).exists());
+        assert!(std::fs::read_dir(&some_testfolder_path).unwrap().count() > 0);
+        for other_sample in &TEST_SAMPLES {
+            if other_sample != some_testfolder {
+                assert!(!PathBuf::from(ROOT).join(other_sample).exists());
+                // make sure depth 'excluded' is not confusing later checkouts
+                super::svn_make_sparse(ROOT, other_sample, super::Revision::Head).unwrap();
+            }
+        }
+
+        // unversioned files should not be deleted
+        let unversioned_file = PathBuf::from(ROOT)
+            .join(TEST_FOLDERS[1])
+            .join("some-unversioned-file.txt");
+        std::fs::write(&unversioned_file, "").unwrap();
+        assert!(unversioned_file.exists());
+
+        // and a warning should be emited
+        //with warnings.catch_warnings(record=True) as caught_warnings:
+        super::remove_unneeded_testcases(ROOT, &[some_testfolder.to_string()], false).unwrap();
+        assert!(unversioned_file.exists());
+        //assertNotEqual(len(caught_warnings), 0)
+
+        std::fs::remove_file(&unversioned_file).unwrap();
+        // double check if it works again
+        //with warnings.catch_warnings(record=True) as caught_warnings:
+        super::remove_unneeded_testcases(ROOT, &[some_testfolder.to_string()], false).unwrap();
+        //assertEqual(len(caught_warnings), 0)
+    }
+
+    #[test]
+    #[serial]
+    fn test_logs() {
+        setup();
+        // Use known commits in test mockup repository:
+        // 819699, 819696, 819695
+        checkout_empty(BRANCH_URL);
+        let some_logs = super::log(
+            ROOT,
+            super::Revision::Revision(819695),
+            super::Revision::Revision(819699),
+            None,
+        )
+        .unwrap();
+        let all_logs = super::log(
+            ROOT,
+            super::Revision::Revision(819695),
+            super::Revision::Head,
+            None,
+        )
+        .unwrap();
+        assert_eq!(some_logs.logentry.len(), 3);
+        assert!(some_logs.logentry.iter().any(|le| le.revision == 819696));
+        assert!(all_logs.logentry.len() > 3);
+    }
+
+    #[test]
+    #[serial]
+    fn test_logs_encoding() {
+        setup();
+        // check that script doesn't choke on weird characters in commit messages
+        // use known commit: 909029
+        checkout_empty(
+            "https://svn.moduleworks.com/ModuleWorks/trunk/testprojects/mwtest svn-encoding",
+        );
+        let all_logs = super::log(
+            ROOT,
+            super::Revision::Revision(909029),
+            super::Revision::Revision(909029),
+            None,
+        )
+        .unwrap();
+        assert_eq!(all_logs.logentry.len(), 1)
+    }
+
+    #[test]
+    fn path_to_list() {
+        assert_eq!(super::path_to_list("/A/B"), vec!["", "A", "B"]);
+    }
+
+    #[test]
+    fn path_endswith() {
+        assert!(super::path_endswith("/A/B/C", "B/C"));
+        assert!(!super::path_endswith("/A/B/C", "D/E"));
+        assert!(!super::path_endswith("/A/B/C", "A/B"));
+    }
+
+    #[test]
+    fn svn_resolve_relpath() {
+        assert_eq!(super::svn_resolve_relpath("/A/B/C", "../../D"), "/A/D");
+    }
+
+    #[test]
+    fn subpath_of() {
+        assert!(super::subpath_of("A", "A"));
+        assert!(super::subpath_of("A/B", "A"));
+        assert!(!super::subpath_of("A", "B"));
+        assert!(!super::subpath_of("A/B", "A/C"));
+
+        assert!(!super::subpath_of(".", "A"));
+        assert!(super::subpath_of("A", "."));
+        assert!(super::subpath_of(".", "."));
+        assert!(super::subpath_of("./A", "A"));
     }
 }

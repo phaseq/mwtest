@@ -107,12 +107,15 @@ enum SubCommands {
         //filter: Option<String>,
 
         /// revision of dev folder (--revision HEAD), overrides revision branch of --dev-dir
-        #[structopt(long, default_value = "HEAD")]
-        revision: String,
+        #[structopt(long)]
+        revision: Option<String>,
 
         /// full path to the remote branch (--branch https://svn.moduleworks.com/ModuleWorks/trunk), overrides remote branch of --dev-dir
         #[structopt(long)]
         branch: Option<String>,
+    },
+    Update {
+        app_names: Vec<String>,
     },
 }
 
@@ -203,35 +206,75 @@ fn main() -> Result<()> {
             revision,
             branch,
         } => {
+            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
+            let mut paths: Vec<String> = vec![];
+            for app in apps.0.values() {
+                for test in &app.tests {
+                    for group in &test.groups {
+                        if let Some(expr) = &group.find_glob {
+                            paths.push(expr.split('*').next().unwrap().to_string());
+                        }
+                        for path in &group.testcases_dependencies {
+                            paths.push(path.to_string());
+                        }
+                    }
+                }
+            }
+
             if input_paths.dev_dir.is_none() && branch.is_none() {
                 println!("ERROR: you need to specify the dev directory (--dev-dir) or a remote branch (--branch)");
                 println!("Note: the --dev-dir parameter needs to appear before the subcommand \"checkout\"");
                 std::process::exit(-1)
             }
-            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
-            /*if let Some(id) = id {
-                println!("checkout: {}", id);
-            } else*/
-            {
-                for app in apps.0.values() {
-                    for test in &app.tests {
-                        for group in &test.groups {
-                            if let Some(expr) = &group.find_glob {
-                                println!("checkout: {}", expr.split('*').next().unwrap());
-                            }
-                        }
-                    }
+            let dev_dir = input_paths.dev_dir.as_ref().unwrap().to_str().unwrap();
+            let testcases_root_dir = input_paths.testcases_dir.to_str().unwrap();
+            match (branch, revision) {
+                (Some(branch), Some(revision)) => {
+                    let revision = match revision.as_ref() {
+                        "HEAD" => svn::Revision::Head,
+                        r => svn::Revision::Revision(
+                            r.parse().wrap_err("Failed to parse given revision.")?,
+                        ),
+                    };
+                    svn::checkout_revision(
+                        &branch,
+                        revision,
+                        &testcases_root_dir,
+                        &paths,
+                        false,
+                        false,
+                        true,
+                    )?;
+                }
+                _ => {
+                    svn::checkout(&dev_dir, &testcases_root_dir, &paths, false, false, true)?;
                 }
             }
+        }
+        SubCommands::Update { app_names } => {
+            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
+            let mut paths: Vec<String> = vec![];
             for app in apps.0.values() {
                 for test in &app.tests {
                     for group in &test.groups {
+                        if let Some(expr) = &group.find_glob {
+                            paths.push(expr.split('*').next().unwrap().to_string());
+                        }
                         for path in &group.testcases_dependencies {
-                            println!("checkout: {}", path);
+                            paths.push(path.to_string());
                         }
                     }
                 }
             }
+
+            if input_paths.dev_dir.is_none() {
+                println!("ERROR: you need to specify the dev directory (--dev-dir).");
+                println!("Note: the --dev-dir parameter needs to appear before the subcommand \"update\"");
+                std::process::exit(-1)
+            }
+            let dev_dir = input_paths.dev_dir.as_ref().unwrap().to_str().unwrap();
+            let testcases_root_dir = input_paths.testcases_dir.to_str().unwrap();
+            svn::update(&dev_dir, &testcases_root_dir, &paths, true)?;
         }
     }
 
