@@ -43,7 +43,6 @@ fn update_revision(
     for test_dir in itertools::sorted(testcase_relative_paths) {
         wcs.append(&mut svn_find_workingcopies(&testcase_root_dir, &test_dir)?);
     }
-    dbg!(&wcs);
     switch_workingcopies(
         &wcs,
         &testcase_root_dir,
@@ -172,6 +171,8 @@ fn create_checkout_and_convert(
     force_conversion: bool,
     verbose: bool,
 ) -> Result<()> {
+    assert!(PathBuf::from(testcase_root_dir).is_absolute());
+
     let nested_checkouts = svn_find_workingcopies(&testcase_root_dir, ".")?;
     if !nested_checkouts.is_empty() {
         if !force_conversion {
@@ -350,6 +351,9 @@ fn switch_workingcopies(
     revision: Revision,
     verbose: bool,
 ) -> Result<()> {
+    // needs to be absolute, otherwise svn_relpath doesn't work
+    assert!(PathBuf::from(testcases_root_path).is_absolute());
+
     if verbose {
         println!("Switching {} to {}", testcases_root_path, revision);
     }
@@ -363,7 +367,7 @@ fn switch_workingcopies(
         wcs.dedup();
         for wc in wcs {
             let wc_relpath = svn_relpath(&wc, &testcases_root_path);
-            if verbose && wc_relpath != "." {
+            if verbose && wc_relpath != "." && !wc_relpath.is_empty() {
                 print_svn_path(&wc_relpath);
             }
             let target_url =
@@ -860,7 +864,7 @@ fn svn_wd(args: &[&str], wd: &str) -> Result<String> {
 mod tests {
     use color_eyre::eyre::Result;
     use serial_test::serial;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
     const ROOT: &str = "test/svn with spaces";
@@ -1076,19 +1080,16 @@ mod tests {
     fn switch_workingcopies() {
         setup();
 
+        let root = PathBuf::from(ROOT).canonicalize().unwrap();
+        let root = root.to_str().unwrap();
+
         // should not throw for no tests
-        super::switch_workingcopies(&[], ROOT, "", super::Revision::Revision(0), false).unwrap();
+        super::switch_workingcopies(&[], root, "", super::Revision::Revision(0), false).unwrap();
 
         checkout(TEST_URL);
         let initial_revision = super::svn_revision(ROOT).unwrap();
         let new_revision = super::Revision::Revision(initial_revision - 1);
-        let root = PathBuf::from(ROOT)
-            .canonicalize()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
-        super::switch_workingcopies(&[root.clone()], &root, BRANCH_URL, new_revision, false)
+        super::switch_workingcopies(&[root.to_string()], &root, BRANCH_URL, new_revision, false)
             .unwrap();
         assert_eq!(
             super::Revision::Revision(super::svn_revision(ROOT).unwrap()),
@@ -1153,13 +1154,27 @@ mod tests {
         setup();
         let dev_dir = ROOT.to_owned() + "/dev";
         let test_dir = ROOT.to_owned() + "/testcases";
+        let test_dir_abs = PathBuf::from(ROOT)
+            .canonicalize()
+            .unwrap()
+            .join("testcases");
+        std::fs::create_dir(&test_dir_abs).unwrap();
+
         super::svn(&["checkout", DEV_URL, &dev_dir]).unwrap();
         let dev_revision = super::svn_revision(&dev_dir).unwrap();
 
         for _ in 0..2 {
             let force = true;
             let test_samples: Vec<String> = TEST_SAMPLES.iter().map(|s| s.to_string()).collect();
-            super::checkout(&dev_dir, &test_dir, &test_samples, force, false, false).unwrap();
+            super::checkout(
+                &dev_dir,
+                &test_dir_abs.to_str().unwrap(),
+                &test_samples,
+                force,
+                false,
+                false,
+            )
+            .unwrap();
             for test in &TEST_SAMPLES {
                 assert!(
                     super::svn_revision(&(test_dir.clone() + "/" + test)).unwrap() >= dev_revision
@@ -1201,12 +1216,14 @@ mod tests {
         assert!(super::svn_revision(&test_sample_url).unwrap() < dev_revision);
 
         for i in 0..1 {
-            super::update(&dev_dir, &test_dir, &[test_sample.to_string()], false).unwrap();
+            let test_dir_abs = PathBuf::from(&test_dir).canonicalize().unwrap();
+            let test_dir_abs = test_dir_abs.to_str().unwrap();
+            super::update(&dev_dir, &test_dir_abs, &[test_sample.to_string()], false).unwrap();
             assert!(super::svn_revision(&test_sample_url).unwrap() >= dev_revision);
             if i == 0 {
                 // In second pass check with a converted repository
                 super::create_checkout_and_convert(
-                    &test_dir,
+                    &test_dir_abs,
                     BRANCH_URL,
                     super::Revision::Revision(dev_revision),
                     true,
