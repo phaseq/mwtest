@@ -226,8 +226,7 @@ fn main() -> Result<()> {
                 println!("Note: the --dev-dir parameter needs to appear before the subcommand \"checkout\"");
                 std::process::exit(-1)
             }
-            let dev_dir = input_paths.dev_dir.as_ref().unwrap().to_str().unwrap();
-            let testcases_root_dir = input_paths.testcases_dir.to_str().unwrap();
+            let dev_dir = input_paths.dev_dir.as_ref().unwrap();
             match (branch, revision) {
                 (Some(branch), Some(revision)) => {
                     let revision = match revision.as_ref() {
@@ -239,7 +238,7 @@ fn main() -> Result<()> {
                     svn::checkout_revision(
                         &branch,
                         revision,
-                        &testcases_root_dir,
+                        &input_paths.testcases_dir,
                         &paths,
                         false,
                         false,
@@ -247,7 +246,14 @@ fn main() -> Result<()> {
                     )?;
                 }
                 _ => {
-                    svn::checkout(&dev_dir, &testcases_root_dir, &paths, false, false, true)?;
+                    svn::checkout(
+                        &dev_dir,
+                        &input_paths.testcases_dir,
+                        &paths,
+                        false,
+                        false,
+                        true,
+                    )?;
                 }
             }
         }
@@ -272,9 +278,12 @@ fn main() -> Result<()> {
                 println!("Note: the --dev-dir parameter needs to appear before the subcommand \"update\"");
                 std::process::exit(-1)
             }
-            let dev_dir = input_paths.dev_dir.as_ref().unwrap().to_str().unwrap();
-            let testcases_root_dir = input_paths.testcases_dir.to_str().unwrap();
-            svn::update(&dev_dir, &testcases_root_dir, &paths, true)?;
+            svn::update(
+                &input_paths.dev_dir.as_ref().unwrap(),
+                &input_paths.testcases_dir,
+                &paths,
+                true,
+            )?;
         }
     }
 
