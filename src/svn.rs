@@ -213,7 +213,7 @@ fn create_checkout_and_convert(
     }
 
     for wc in &nested_checkouts {
-        let status = status(&wc.to_str().unwrap())?;
+        let status = status(&wc)?;
         let has_not_allowed_status = status.target.entry.iter().any(|t| {
             ["conflicted", "unversioned", "added", "deleted", "replaced"]
                 .contains(&t.wc_status.item.as_str())
@@ -310,7 +310,7 @@ fn remove_unneeded_testcases(
             if verbose {
                 print_svn_path(&path);
             }
-            let status = status(&path)?;
+            let status = status(&testcase_root_dir.join(&path))?;
             if !status.target.entry.is_empty() {
                 println!(
                     "Cannot remove {:?}, it contains changes or unversioned files",
@@ -421,19 +421,22 @@ fn svn_make_sparse(root: &Path, path: &Path, revision: Revision) -> Result<()> {
             }
         };
         if needs_update {
-            let abs_path = root.join(sub_path);
-            svn(&[
-                "update",
-                &format!("--set-depth={}", needed_depth),
-                "--force",
-                "--accept=postpone",
-                "--revision",
-                &revision.to_string(),
-                &abs_path.to_str().unwrap(),
-            ])?;
+            svn_wd(
+                &[
+                    "update",
+                    &format!("--set-depth={}", needed_depth),
+                    "--force",
+                    "--accept=postpone",
+                    "--revision",
+                    &revision.to_string(),
+                    &sub_path.to_str().unwrap(),
+                ],
+                &root,
+            )?;
 
             // svn update silently does nothing if an url does not exist.
             // => Check if something was created locally
+            let abs_path = root.join(sub_path);
             svn_depth(&abs_path, root)
                 .wrap_err("Path does not exist in SVN. Did you pass the correct test id?")?;
         }
@@ -742,8 +745,8 @@ struct WcStatus {
     item: String,
 }
 
-fn status(root: &str) -> Result<Status> {
-    let output = svn(&["status", "--xml", root])?;
+fn status(root: &Path) -> Result<Status> {
+    let output = svn(&["status", "--xml", root.to_str().unwrap()])?;
     Ok(serde_xml_rs::from_str(&output).unwrap())
 }
 
@@ -835,6 +838,7 @@ fn log(
 }
 
 fn svn(args: &[&str]) -> Result<String> {
+    println!("svn {:?}", args);
     let output = Command::new("svn")
         .args(args)
         .output()
@@ -847,12 +851,15 @@ fn svn(args: &[&str]) -> Result<String> {
 }
 
 fn svn_wd(args: &[&str], wd: &Path) -> Result<String> {
+    println!("svn_args {:?}\n  wd:{:?}", args, wd);
     let output = Command::new("svn")
         .args(args)
         .current_dir(wd)
         .output()
         .wrap_err("Failed to start SVN")?;
     let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    let stderr = std::str::from_utf8(&output.stderr).unwrap();
+    println!("{:?}{:?}", stdout, stderr);
     if !output.status.success() {
         return Err(eyre!("Failed to run SVN: {:?}\n{:?}", args, output));
     }
@@ -938,9 +945,7 @@ mod tests {
         setup();
         checkout(DEV_URL);
         std::fs::write(Path::new(ROOT).join("test.txt"), "").unwrap();
-        let entries = super::status(Path::new(ROOT).to_str().unwrap())?
-            .target
-            .entry;
+        let entries = super::status(Path::new(ROOT))?.target.entry;
         let unversioned: Vec<_> = entries
             .iter()
             .filter(|entry| entry.wc_status.item == "unversioned")
