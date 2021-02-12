@@ -378,7 +378,7 @@ fn cmd_run(
                 &output_paths.out_dir
             ));
         }
-        std::fs::remove_dir_all(&output_paths.out_dir).expect("could not clean up tmp directory!");
+        remove_dir_all::remove_dir_all(&output_paths.out_dir).expect("could not clean up tmp directory!");
     }
     std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
     println!(
