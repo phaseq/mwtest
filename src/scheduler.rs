@@ -99,71 +99,44 @@ async fn run_local(
         })
         .collect();
 
-    match run_config.repeat {
-        RepeatStrategy::Repeat(repeat) => {
-            // repeat each test exactly `repeat` times
-            let instances = tests
-                .iter()
-                .flat_map(|(group, tic)| (0..repeat).map(move |_| (group, tic.instantiate())));
-            futures::stream::iter(instances)
-                .map(|(group, instance)| {
-                    let app_name = group.app_name.clone();
-                    let timeout = group.get_timeout_duration();
-                    let report = report.clone();
-                    async move {
-                        if instance.is_g_multitest {
-                            run_gtest(instance, &app_name, report).await
-                        } else {
+    let (n_repeats, n_retries) = match run_config.repeat {
+        RepeatStrategy::Repeat(repeat) => (repeat, 0),
+        RepeatStrategy::RepeatIfFailed(repeat) => (1, repeat),
+    };
+    {
+        let instances = tests
+            .iter()
+            .flat_map(|(group, tic)| (0..n_repeats).map(move |_| (group, tic)));
+        futures::stream::iter(instances)
+            .map(|(group, tic)| {
+                let app_name = group.app_name.clone();
+                let timeout = group.get_timeout_duration();
+                let report = report.clone();
+                async move {
+                    let mut instance = tic.instantiate();
+                    if instance.is_g_multitest {
+                        // no retrying for bundled tests yet
+                        run_gtest(instance, &app_name, report).await
+                    } else {
+                        for _ in 0..=n_retries {
                             let result = instance.run_async(timeout).await;
                             report.lock().unwrap().add(&app_name, instance, &result);
-                            group.accepted_returncodes.contains(&result.exit_code)
-                        }
-                    }
-                })
-                .buffer_unordered(n_workers)
-                .fold(true, |overall_success, success| {
-                    future::ready(overall_success && success)
-                })
-                .await
-        }
-        RepeatStrategy::RepeatIfFailed(repeat_if_failed) => {
-            // repeat each test up to `repeat_if_failed` times (or less, if it succeeds earlier)
-            futures::stream::iter(tests)
-                .map(|(group, tic)| {
-                    let app_name = group.app_name.clone();
-                    let timeout = group.get_timeout_duration();
-                    async move {
-                        assert_eq!(tic.is_g_multitest, false);
-                        let mut results = vec![];
-                        for _ in 0..=repeat_if_failed {
-                            let instance = tic.instantiate();
-                            let result = instance.run_async(timeout).await;
-                            let success = group.accepted_returncodes.contains(&result.exit_code);
-                            results.push((instance, result, success));
-                            if success {
-                                break;
+                            if group.accepted_returncodes.contains(&result.exit_code) {
+                                return true;
                             }
+                            // test failed, try again
+                            instance = tic.instantiate();
                         }
-                        (app_name, tic, results)
+                        // give up retrying: test really failed
+                        false
                     }
-                })
-                .buffer_unordered(n_workers)
-                .fold(
-                    (true, report),
-                    |(mut success, report), (app_name, _tic, results)| {
-                        for (test_instance, result, success_) in results {
-                            report
-                                .lock()
-                                .unwrap()
-                                .add(&app_name, test_instance, &result);
-                            success &= success_;
-                        }
-                        future::ready((success, report))
-                    },
-                )
-                .map(|(success, _)| success)
-                .await
-        }
+                }
+            })
+            .buffer_unordered(n_workers)
+            .fold(true, |overall_success, success| {
+                future::ready(overall_success && success)
+            })
+            .await
     }
 }
 
