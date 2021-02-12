@@ -309,7 +309,7 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
         let deps = dependencies.entry(solution).or_insert_with(Vec::new);
         (*deps).push(project);
     }
-    let has_buildconsole = match Command::new("buildConsole").spawn() {
+    let has_buildconsole = match Command::new("buildConsole").output() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         _ => true,
     };
@@ -378,7 +378,8 @@ fn cmd_run(
                 &output_paths.out_dir
             ));
         }
-        remove_dir_all::remove_dir_all(&output_paths.out_dir).expect("could not clean up tmp directory!");
+        remove_dir_all::remove_dir_all(&output_paths.out_dir)
+            .expect("could not clean up tmp directory!");
     }
     std::fs::create_dir_all(&output_paths.tmp_dir).expect("could not create tmp directory!");
     println!(
