@@ -83,18 +83,9 @@ pub struct TestGroup {
     pub tests: Vec<TestInstanceCreator>,
 }
 impl TestGroup {
-    pub fn get_timeout_duration(&self) -> std::time::Duration {
-        // TODO: is there a more elegant way to handle this?
-        let timeout = self.timeout.unwrap_or((60 * 60 * 24) as f32);
-        std::time::Duration::from_millis((timeout * 1000.0) as u64)
-    }
-
-    pub fn can_use_xge(&self) -> bool {
-        match self.execution_style {
-            ExecutionStyle::XGE => true,
-            ExecutionStyle::Parallel => false,
-            ExecutionStyle::Single => panic!("Not implemented :("),
-        }
+    pub fn get_timeout_duration(&self) -> Option<std::time::Duration> {
+        self.timeout
+            .map(|t| std::time::Duration::from_millis((t * 1000.0) as u64))
     }
 }
 

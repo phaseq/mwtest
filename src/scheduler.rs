@@ -406,7 +406,14 @@ impl TestQueue {
                     title: instance.test_id.id.clone(),
                     cwd: instance.command.cwd.clone(),
                     command: instance.command.command,
-                    local: !group.can_use_xge(),
+                    local: matches!(
+                        group.execution_style,
+                        crate::runnable::ExecutionStyle::Parallel
+                    ),
+                    single: matches!(
+                        group.execution_style,
+                        crate::runnable::ExecutionStyle::Single
+                    ),
                 })
             }
             None => None,
@@ -434,24 +441,26 @@ impl TestQueue {
 }
 
 impl TestInstance {
-    async fn run_async(&self, timeout: std::time::Duration) -> TestCommandResult {
+    async fn run_async(&self, timeout: Option<std::time::Duration>) -> TestCommandResult {
         let output_future = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
             .kill_on_drop(true)
             .output();
-        let output = tokio::time::timeout(timeout, output_future).await;
-        let output = match output {
-            Ok(output) => output,
-            Err(_) => {
-                return TestCommandResult {
-                    exit_code: 1,
-                    stdout: format!(
-                        "[mwtest] terminated because {} second timeout was reached!",
-                        timeout.as_secs()
-                    ),
-                };
-            }
+        let output = match timeout {
+            Some(timeout) => match tokio::time::timeout(timeout, output_future).await {
+                Ok(output) => output,
+                Err(_) => {
+                    return TestCommandResult {
+                        exit_code: 1,
+                        stdout: format!(
+                            "[mwtest] terminated because {} second timeout was reached!",
+                            timeout.as_secs()
+                        ),
+                    };
+                }
+            },
+            None => output_future.await,
         };
         let output = match output {
             Ok(output) => output,

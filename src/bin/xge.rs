@@ -21,6 +21,9 @@ fn accept_commands(stream: TcpStream) {
             if request.local {
                 cmd.arg("/allowremote=off");
             }
+            if request.single {
+                cmd.arg("/wait"); // this waits for all tasks, we would actually only have to wait for tasks of the same app
+            }
             cmd.arg("/command")
                 .arg(this_exe)
                 .arg("w")

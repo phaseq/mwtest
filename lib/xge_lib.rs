@@ -8,7 +8,10 @@ pub struct StreamRequest {
     pub title: String,
     pub cwd: String,
     pub command: Vec<String>,
+    #[serde(default)]
     pub local: bool,
+    #[serde(default)]
+    pub single: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
