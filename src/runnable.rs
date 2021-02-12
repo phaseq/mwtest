@@ -101,7 +101,6 @@ impl TestInstanceCreator {
         TestInstance {
             test_id: self.test_id.clone(),
             command: (self.command_generator)(),
-            is_g_multitest: self.is_g_multitest,
         }
     }
 }
@@ -117,7 +116,6 @@ pub enum ExecutionStyle {
 pub struct TestInstance {
     pub test_id: TestId,
     pub command: TestCommand,
-    pub is_g_multitest: bool,
 }
 
 impl TestInstance {

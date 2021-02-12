@@ -1,6 +1,6 @@
 use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use relative_path::{RelativePath, RelativePathBuf};
-use serde_derive::Deserialize;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

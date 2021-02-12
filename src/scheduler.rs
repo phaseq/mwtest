@@ -113,19 +113,18 @@ async fn run_local(
                 let timeout = group.get_timeout_duration();
                 let report = report.clone();
                 async move {
-                    let mut instance = tic.instantiate();
-                    if instance.is_g_multitest {
+                    if tic.is_g_multitest {
                         // no retrying for bundled tests yet
-                        run_gtest(instance, &app_name, report).await
+                        run_gtest(tic.instantiate(), &app_name, report).await
                     } else {
                         for _ in 0..=n_retries {
+                            let instance = tic.instantiate();
                             let result = instance.run_async(timeout).await;
                             report.lock().unwrap().add(&app_name, instance, &result);
                             if group.accepted_returncodes.contains(&result.exit_code) {
                                 return true;
                             }
                             // test failed, try again
-                            instance = tic.instantiate();
                         }
                         // give up retrying: test really failed
                         false
@@ -225,7 +224,6 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
                         cwd: "".into(),
                         tmp_path: None,
                     },
-                    is_g_multitest: false,
                 };
                 let exit_code = if success { 0 } else { 1 };
                 let result = TestCommandResult {
