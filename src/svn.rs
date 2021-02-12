@@ -4,10 +4,6 @@ use serde_derive::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/* TODO: fix on windows:
-svn::tests::complete_branch_checkout
-svn::tests::remove_unneeded_testcases*/
-
 pub fn update(
     dev_dir: &Path,
     testcase_root_dir: &Path,
