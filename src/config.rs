@@ -64,7 +64,7 @@ pub struct TestGroupConfig {
     pub timeout: Option<f32>,
     pub timeout_if_changed: Option<f32>, // TODO
     #[serde(default)]
-    pub testcases_dependencies: Vec<String>, // TODO
+    pub testcases_dependencies: Vec<String>,
     #[serde(default = "value_xge")]
     pub execution_style: String,
 }

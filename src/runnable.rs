@@ -1,6 +1,7 @@
 use crate::config;
 use crate::TestId;
 use std::path::PathBuf;
+use tokio::process::Command;
 use uuid::Uuid;
 
 pub fn create_run_commands(
@@ -117,6 +118,65 @@ pub struct TestInstance {
     pub test_id: TestId,
     pub command: TestCommand,
     pub is_g_multitest: bool,
+}
+
+impl TestInstance {
+    pub async fn run_async(&self, timeout: Option<std::time::Duration>) -> TestCommandResult {
+        let output_future = Command::new(&self.command.command[0])
+            .args(self.command.command[1..].iter())
+            .current_dir(&self.command.cwd)
+            .kill_on_drop(true)
+            .output();
+        let output = match timeout {
+            Some(timeout) => match tokio::time::timeout(timeout, output_future).await {
+                Ok(output) => output,
+                Err(_) => {
+                    return TestCommandResult {
+                        exit_code: 1,
+                        stdout: format!(
+                            "[mwtest] terminated because {} second timeout was reached!",
+                            timeout.as_secs()
+                        ),
+                    };
+                }
+            },
+            None => output_future.await,
+        };
+        let output = match output {
+            Ok(output) => output,
+            Err(e) => {
+                return TestCommandResult {
+                    exit_code: 1,
+                    stdout: format!(
+                        "[mwtest] error while trying to start test: {}",
+                        e.to_string()
+                    ),
+                };
+            }
+        };
+        let tmp_path = self.command.tmp_path.clone();
+        let exit_code = output.status.code().unwrap_or(-7787);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output_str = stderr + stdout;
+
+        // cleanup
+        if let Some(tmp_path) = tmp_path {
+            if tmp_path.is_dir() && std::fs::read_dir(&tmp_path).unwrap().next().is_none() {
+                std::fs::remove_dir(&tmp_path).expect("failed to clean up temporary directory!");
+            }
+        }
+        TestCommandResult {
+            exit_code,
+            stdout: output_str.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TestCommandResult {
+    pub exit_code: i32,
+    pub stdout: String,
 }
 
 #[derive(Debug, Clone)]

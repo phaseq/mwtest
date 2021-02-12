@@ -1,5 +1,4 @@
 use crate::runnable;
-use crate::scheduler;
 use color_eyre::eyre::{Result, WrapErr};
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
@@ -13,7 +12,7 @@ pub trait Reportable {
         &mut self,
         app_name: &str,
         test_instance: runnable::TestInstance,
-        test_result: &scheduler::TestCommandResult,
+        test_result: &runnable::TestCommandResult,
     );
 }
 
@@ -48,7 +47,7 @@ impl Reportable for Report {
         &mut self,
         app_name: &str,
         test_instance: runnable::TestInstance,
-        test_result: &scheduler::TestCommandResult,
+        test_result: &runnable::TestCommandResult,
     ) {
         self.i += 1;
         self.std_out
@@ -60,7 +59,7 @@ impl Reportable for Report {
 
 struct XmlReport {
     file: File,
-    results: HashMap<String, Vec<(runnable::TestInstance, scheduler::TestCommandResult)>>,
+    results: HashMap<String, Vec<(runnable::TestInstance, runnable::TestCommandResult)>>,
     artifacts_root: PathBuf,
     testcases_root: PathBuf,
 }
@@ -82,7 +81,7 @@ impl XmlReport {
         &mut self,
         app_name: &str,
         test_instance: runnable::TestInstance,
-        test_result: &scheduler::TestCommandResult,
+        test_result: &runnable::TestCommandResult,
     ) {
         match self.results.entry(app_name.to_string()) {
             hash_map::Entry::Vacant(e) => {
@@ -126,7 +125,7 @@ impl XmlReport {
         &self,
         out: &mut BufWriter<&File>,
         test_instance: &runnable::TestInstance,
-        command_result: &scheduler::TestCommandResult,
+        command_result: &runnable::TestCommandResult,
     ) -> std::io::Result<()> {
         out.write_all(
             format!(
@@ -159,7 +158,7 @@ impl XmlReport {
         tmp_path: &Path,
         out: &mut BufWriter<&File>,
         test_instance: &runnable::TestInstance,
-        command_result: &scheduler::TestCommandResult,
+        command_result: &runnable::TestCommandResult,
     ) -> std::io::Result<()> {
         if tmp_path.exists() {
             let rel_path = test_instance.test_id.rel_path.as_ref().unwrap();
@@ -267,7 +266,7 @@ impl CliLogger {
         n: usize,
         name: &str,
         test_instance: &runnable::TestInstance,
-        result: &scheduler::TestCommandResult,
+        result: &runnable::TestCommandResult,
     ) {
         let id = &test_instance.test_id.id;
 

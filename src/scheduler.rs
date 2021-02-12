@@ -3,7 +3,7 @@ use crate::report;
 use crate::report::Reportable;
 #[cfg(test)]
 use crate::runnable::{ExecutionStyle, TestCommand};
-use crate::runnable::{TestGroup, TestInstance, TestInstanceCreator};
+use crate::runnable::{TestCommandResult, TestGroup, TestInstance, TestInstanceCreator};
 use crate::OutputPaths;
 use color_eyre::eyre::Result;
 use futures::prelude::*;
@@ -44,12 +44,6 @@ pub fn run(
             run_report_local(test_groups, &input_paths, &output_paths, &run_config).await
         })
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct TestCommandResult {
-    pub exit_code: i32,
-    pub stdout: String,
 }
 
 async fn run_report_local(
@@ -440,59 +434,6 @@ impl TestQueue {
     }
 }
 
-impl TestInstance {
-    async fn run_async(&self, timeout: Option<std::time::Duration>) -> TestCommandResult {
-        let output_future = Command::new(&self.command.command[0])
-            .args(self.command.command[1..].iter())
-            .current_dir(&self.command.cwd)
-            .kill_on_drop(true)
-            .output();
-        let output = match timeout {
-            Some(timeout) => match tokio::time::timeout(timeout, output_future).await {
-                Ok(output) => output,
-                Err(_) => {
-                    return TestCommandResult {
-                        exit_code: 1,
-                        stdout: format!(
-                            "[mwtest] terminated because {} second timeout was reached!",
-                            timeout.as_secs()
-                        ),
-                    };
-                }
-            },
-            None => output_future.await,
-        };
-        let output = match output {
-            Ok(output) => output,
-            Err(e) => {
-                return TestCommandResult {
-                    exit_code: 1,
-                    stdout: format!(
-                        "[mwtest] error while trying to start test: {}",
-                        e.to_string()
-                    ),
-                };
-            }
-        };
-        let tmp_path = self.command.tmp_path.clone();
-        let exit_code = output.status.code().unwrap_or(-7787);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let output_str = stderr + stdout;
-
-        // cleanup
-        if let Some(tmp_path) = tmp_path {
-            if tmp_path.is_dir() && std::fs::read_dir(&tmp_path).unwrap().next().is_none() {
-                std::fs::remove_dir(&tmp_path).expect("failed to clean up temporary directory!");
-            }
-        }
-        TestCommandResult {
-            exit_code,
-            stdout: output_str.to_string(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,8 +523,8 @@ mod tests {
         fn add(
             &mut self,
             _app_name: &str,
-            _test_instance: crate::runnable::TestInstance,
-            _test_result: &crate::scheduler::TestCommandResult,
+            _test_instance: TestInstance,
+            _test_result: &TestCommandResult,
         ) {
             self.count += 1;
         }
