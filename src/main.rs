@@ -90,9 +90,13 @@ enum SubCommands {
     Checkout {
         app_names: Vec<String>,
 
+        /// will convert the testcases folder to a sparse checkout
+        #[structopt(long)]
+        force: bool,
+
         /// will remove all other checked-out files.
-        //#[structopt(long)]
-        //minimal: bool,
+        #[structopt(long)]
+        minimal: bool,
 
         /// the test id you want to check out
         //#[structopt(long)]
@@ -200,13 +204,16 @@ fn main() -> Result<()> {
         }
         SubCommands::Checkout {
             app_names,
-            //minimal,
+            force,
+            minimal,
             //id,
             //filter,
             revision,
             branch,
         } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
+            //let id_filter = id_filter_from_args(filter, id);
+
             let mut paths: Vec<String> = vec![];
             for app in apps.0.values() {
                 for test in &app.tests {
@@ -240,8 +247,8 @@ fn main() -> Result<()> {
                         revision,
                         &input_paths.testcases_dir,
                         &paths,
-                        false,
-                        false,
+                        force,
+                        minimal,
                         true,
                     )?;
                 }
@@ -250,8 +257,8 @@ fn main() -> Result<()> {
                         &dev_dir,
                         &input_paths.testcases_dir,
                         &paths,
-                        false,
-                        false,
+                        force,
+                        minimal,
                         true,
                     )?;
                 }
@@ -316,7 +323,10 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
     for (solution, projects) in dependencies {
         let projects = projects.join(",");
         let status = if has_buildconsole {
-            println!("building:\n  solution: {}\n  {}", &solution, &projects);
+            println!(
+                "building:\n  solution: {}\n  projects: {}",
+                &solution, &projects
+            );
             Command::new("buildConsole")
                 .arg(solution)
                 .arg("/build")

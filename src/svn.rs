@@ -678,7 +678,7 @@ fn check_svn_available() -> Result<()> {
         ))?;
     let output = std::str::from_utf8(&output.stdout).unwrap();
 
-    let re = regex::Regex::new(r"version (\d+)\.(\d+)").unwrap();
+    let re = regex::Regex::new(r"version ([0-9]+)\.([0-9]+)").unwrap();
     match re.captures(output) {
         Some(cap) => {
             let (major, minor) = (cap[1].parse().unwrap(), cap[2].parse().unwrap());
