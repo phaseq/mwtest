@@ -51,39 +51,19 @@ struct Args {
 enum SubCommands {
     Build {
         app_names: Vec<String>,
+
+        /// Don't show the XGE monitor for builds.
+        #[structopt(long)]
+        no_monitor: bool,
     },
     List {
         app_names: Vec<String>,
-        /// select ids that contain one of the given substrings
+
+        /// Show only ids that contain one of the given substrings.
         #[structopt(short, long)]
         filter: Vec<String>,
     },
-    Run {
-        app_names: Vec<String>,
-
-        #[structopt(long, conflicts_with = "filter")]
-        id: Vec<String>,
-
-        /// select ids that contain one of the given substrings
-        #[structopt(short, long)]
-        filter: Vec<String>,
-
-        #[structopt(short, long)]
-        verbose: bool,
-
-        #[structopt(short, long, conflicts_with = "xge")]
-        parallel: bool,
-        #[structopt(long)]
-        xge: bool,
-
-        #[structopt(short, long, default_value = "1")]
-        repeat: usize,
-        #[structopt(long, default_value = "0")]
-        repeat_if_failed: usize,
-
-        #[structopt(long)]
-        no_timeout: bool,
-    },
+    Run(RunArgs),
     Info {
         app_name: String,
     },
@@ -123,6 +103,68 @@ enum SubCommands {
     },
 }
 
+#[derive(StructOpt)]
+pub struct RunArgs {
+    app_names: Vec<String>,
+
+    #[structopt(long, conflicts_with = "filter")]
+    id: Vec<String>,
+
+    /// Run only ids that contain one of the given substrings.
+    #[structopt(short, long)]
+    filter: Vec<String>,
+
+    /// Show the full test output, even for succeeded tests.
+    #[structopt(short, long)]
+    verbose: bool,
+
+    /// Run with multiple local threads. You can also give the thread count explicitly.
+    #[structopt(short, long, conflicts_with = "xge")]
+    parallel: Option<Option<usize>>,
+
+    #[structopt(long)]
+    xge: bool,
+
+    /// Don't open the XGE monitor.
+    #[structopt(long)]
+    no_monitor: bool,
+
+    /// Run each test 'N' times. All repeats have to succeed.
+    #[structopt(short, long, default_value = "1")]
+    repeat: usize,
+
+    /// Repeat each test up to 'N' times. At least one of those runs has to succeed
+    #[structopt(long, default_value = "1", conflicts_with = "repeat")]
+    repeat_if_failed: usize,
+
+    /// MWTest exits with code "0", even if tests failed. This is the expected behavior for Jenkins.
+    #[structopt(long)]
+    treat_completion_as_success: bool,
+
+    /// abort immediately after the first error
+    #[structopt(long)]
+    fail_fast: bool,
+
+    /// Disables the timeout check for all tests.
+    #[structopt(long)]
+    no_timeout: bool,
+
+    /// Multiply all timeouts by this factor.
+    #[structopt(long)]
+    timeout_factor: Option<f64>,
+
+    /// Test ids named in this file are never run. The format is the same that is printed by "mwtest list".
+    /// Lines that begin with '#' are comments.
+    #[structopt(long)]
+    exclusion_file: Option<String>,
+
+    /// Only changed files are run. They may use a lower timeout
+    /// (configured in preset). This is only implemented for tests
+    /// where the changed path has a 1-to-1 mapping with the test (like exactoutput).
+    #[structopt(long)]
+    run_only_changed_file: Option<String>,
+}
+
 fn main() -> Result<()> {
     color_eyre::install()?;
 
@@ -141,34 +183,36 @@ fn main() -> Result<()> {
         .wrap_err("Failed to load apps.json!")?;
 
     match args.cmd {
-        SubCommands::Build { app_names } => {
+        SubCommands::Build {
+            app_names,
+            no_monitor,
+        } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
-            cmd_build(&apps, &input_paths)?;
+            cmd_build(&apps, &input_paths, no_monitor)?;
         }
         SubCommands::List { app_names, filter } => {
             if !app_names.is_empty() {
                 let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
-                let app_tests = generate_app_tests(filter, vec![], &input_paths, &apps, false);
+                let app_tests = generate_app_tests(&filter, &[], &input_paths, &apps, false);
                 cmd_list_tests(&app_tests);
             } else {
                 cmd_list_apps(&apps_config);
             }
         }
-        SubCommands::Run {
-            app_names,
-            id,
-            filter,
-            verbose,
-            parallel,
-            xge,
-            repeat,
-            repeat_if_failed,
-            no_timeout,
-        } => {
-            let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
-            let can_run_raw_gtest =
-                filter.is_empty() && id.is_empty() && !parallel && !xge && repeat_if_failed == 0;
-            let app_tests = generate_app_tests(filter, id, &input_paths, &apps, can_run_raw_gtest);
+        SubCommands::Run(run_args) => {
+            let apps = apps_config.select_build_and_preset(&run_args.app_names, &input_paths)?;
+            let can_run_raw_gtest = run_args.filter.is_empty()
+                && run_args.id.is_empty()
+                && run_args.parallel.is_none()
+                && !run_args.xge
+                && run_args.repeat_if_failed == 0;
+            let app_tests = generate_app_tests(
+                &run_args.filter,
+                &run_args.id,
+                &input_paths,
+                &apps,
+                can_run_raw_gtest,
+            );
             let out_dir = args
                 .output_dir
                 .map(PathBuf::from)
@@ -177,24 +221,7 @@ fn main() -> Result<()> {
                 out_dir: out_dir.clone(),
                 tmp_dir: out_dir.join("tmp"),
             };
-            let repeat_strategy = if repeat_if_failed != 0 {
-                scheduler::RepeatStrategy::RepeatIfFailed(repeat_if_failed)
-            } else {
-                scheduler::RepeatStrategy::Repeat(repeat)
-            };
-            let run_config = scheduler::RunConfig {
-                verbose,
-                parallel,
-                xge,
-                repeat: repeat_strategy,
-            };
-            let success = cmd_run(
-                &input_paths,
-                &app_tests,
-                &output_paths,
-                &run_config,
-                no_timeout,
-            )?;
+            let success = cmd_run(&input_paths, &app_tests, &output_paths, &run_args)?;
             if !success {
                 std::process::exit(-1)
             }
@@ -297,7 +324,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
+fn cmd_build(apps: &config::Apps, paths: &config::InputPaths, no_monitor: bool) -> Result<()> {
     let mut dependencies: HashMap<String, Vec<&str>> = HashMap::new();
     for (name, app) in apps.0.iter() {
         let build = &app.build;
@@ -327,15 +354,17 @@ fn cmd_build(apps: &config::Apps, paths: &config::InputPaths) -> Result<()> {
                 "building:\n  solution: {}\n  projects: {}",
                 &solution, &projects
             );
-            Command::new("buildConsole")
+            let mut command = Command::new("buildConsole");
+            command
                 .arg(solution)
                 .arg("/build")
                 .arg("/silent")
                 .arg(format!("/cfg={}|x64", paths.build_config))
-                .arg(format!("/prj={}", projects))
-                .arg("/openmonitor")
-                .status()
-                .wrap_err("failed to build project!")?
+                .arg(format!("/prj={}", projects));
+            if !no_monitor {
+                command.arg("/openmonitor");
+            }
+            command.status().wrap_err("failed to build project!")?
         } else {
             println!("building:\n  projects: {}", &projects);
             Command::new("cmake")
@@ -377,8 +406,7 @@ fn cmd_run(
     input_paths: &config::InputPaths,
     test_apps: &[AppWithTests],
     output_paths: &OutputPaths,
-    run_config: &scheduler::RunConfig,
-    no_timeout: bool,
+    run_args: &crate::RunArgs,
 ) -> Result<bool> {
     if Path::exists(&output_paths.out_dir) {
         if !Path::exists(&output_paths.out_dir.clone().join("results.xml")) {
@@ -397,12 +425,13 @@ fn cmd_run(
         output_paths.out_dir.to_str().unwrap()
     );
 
-    let tests = runnable::create_run_commands(&input_paths, &test_apps, &output_paths, no_timeout);
+    let tests =
+        runnable::create_run_commands(&input_paths, &test_apps, &output_paths, run_args.no_timeout);
     if tests.is_empty() {
         println!("WARNING: No tests were selected.");
         std::process::exit(0); // counts as success
     }
-    scheduler::run(&input_paths, tests, &output_paths, &run_config)
+    scheduler::run(&input_paths, tests, &output_paths, &run_args)
 }
 
 fn cmd_info(
@@ -508,8 +537,8 @@ pub struct OutputPaths {
 }
 
 fn generate_app_tests(
-    filter: Vec<String>,
-    id: Vec<String>,
+    filter: &[String],
+    id: &[String],
     input_paths: &config::InputPaths,
     apps_config: &config::Apps,
     can_run_raw_gtest: bool,
@@ -561,7 +590,7 @@ fn generate_app_tests(
     apps
 }
 
-fn id_filter_from_args(filter: Vec<String>, id: Vec<String>) -> Box<dyn Fn(&str) -> bool> {
+fn id_filter_from_args<'a>(filter: &'a [String], id: &'a [String]) -> impl Fn(&str) -> bool + 'a {
     let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
     Box::new(move |input: &str| {
         let input = normalize(input);

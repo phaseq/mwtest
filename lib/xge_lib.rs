@@ -21,7 +21,7 @@ pub struct StreamResult {
     pub stdout: String,
 }
 
-pub async fn xge() -> (tokio::process::Child, std::io::Result<TcpStream>) {
+pub async fn xge(open_monitor: bool) -> (tokio::process::Child, std::io::Result<TcpStream>) {
     let listener = TcpListener::bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
         .await
         .unwrap();
@@ -30,11 +30,15 @@ pub async fn xge() -> (tokio::process::Child, std::io::Result<TcpStream>) {
     let parent = parent.parent().unwrap();
     let profile_xml = String::from(parent.join("profile.xml").to_str().unwrap());
     let xge_exe = String::from(parent.join("xge.exe").to_str().unwrap());
-    let client_process = Command::new("xgConsole")
+    let mut client_process = Command::new("xgConsole");
+    client_process
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .arg(format!("/profile={}", profile_xml))
-        .arg("/openmonitor")
+        .arg(format!("/profile={}", profile_xml));
+    if open_monitor {
+        client_process.arg("/openmonitor");
+    }
+    let client_process = client_process
         .arg(format!("/command={} client 127.0.0.1:{}", xge_exe, port))
         .spawn()
         .expect("could not spawn XGE client!");

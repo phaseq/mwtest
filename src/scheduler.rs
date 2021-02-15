@@ -13,35 +13,21 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
-#[derive(Debug, Clone)]
-pub struct RunConfig {
-    pub verbose: bool,
-    pub parallel: bool,
-    pub xge: bool,
-    pub repeat: RepeatStrategy,
-}
-
-#[derive(Debug, Clone)]
-pub enum RepeatStrategy {
-    Repeat(usize),
-    RepeatIfFailed(usize),
-}
-
 pub fn run(
     input_paths: &config::InputPaths,
     test_groups: Vec<TestGroup>,
     output_paths: &crate::OutputPaths,
-    run_config: &RunConfig,
+    run_args: &crate::RunArgs,
 ) -> Result<bool> {
     let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-    if run_config.xge {
+    if run_args.xge {
         runtime.block_on(async {
-            run_report_xge(test_groups, &input_paths, &output_paths, &run_config).await
+            run_report_xge(test_groups, &input_paths, &output_paths, &run_args).await
             //.unwrap_or(false)
         })
     } else {
         runtime.block_on(async {
-            run_report_local(test_groups, &input_paths, &output_paths, &run_config).await
+            run_report_local(test_groups, &input_paths, &output_paths, &run_args).await
         })
     }
 }
@@ -50,7 +36,7 @@ async fn run_report_local(
     test_groups: Vec<TestGroup>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
-    run_config: &RunConfig,
+    run_args: &crate::RunArgs,
 ) -> Result<bool> {
     let report = Arc::new(Mutex::new(report::Report::new(
         &output_paths.out_dir,
@@ -58,30 +44,27 @@ async fn run_report_local(
             .testcases_dir
             .to_str()
             .expect("Couldn't convert path to string!"),
-        run_config.verbose,
+        run_args.verbose,
     )?));
-    Ok(run_local(test_groups, run_config, report).await)
+    Ok(run_local(test_groups, run_args, report).await)
 }
 
 async fn run_local(
     test_groups: Vec<TestGroup>,
-    run_config: &RunConfig,
+    run_args: &crate::RunArgs,
     report: Arc<Mutex<dyn Reportable>>,
 ) -> bool {
     let n_tests: usize = test_groups.iter().map(|g| g.tests.len()).sum();
-    let n = n_tests
-        * match run_config.repeat {
-            RepeatStrategy::Repeat(n) => n,
-            RepeatStrategy::RepeatIfFailed(_) => 1,
-        };
+    let n = n_tests * run_args.repeat;
     {
         report.lock().unwrap().expect_additional_tests(n);
     }
 
-    let n_workers = if run_config.parallel || run_config.xge {
-        num_cpus::get()
-    } else {
-        1
+    let n_workers = match run_args.parallel {
+        // TODO: also enable threads for XGE
+        Some(None) => num_cpus::get(),
+        Some(Some(thread_count)) => thread_count,
+        _ => 1,
     };
 
     let tests: Vec<(Arc<TestGroup>, TestInstanceCreator)> = test_groups
@@ -99,14 +82,10 @@ async fn run_local(
         })
         .collect();
 
-    let (n_repeats, n_retries) = match run_config.repeat {
-        RepeatStrategy::Repeat(repeat) => (repeat, 0),
-        RepeatStrategy::RepeatIfFailed(repeat) => (1, repeat),
-    };
     {
         let instances = tests
             .iter()
-            .flat_map(|(group, tic)| (0..n_repeats).map(move |_| (group, tic)));
+            .flat_map(|(group, tic)| (0..run_args.repeat).map(move |_| (group, tic)));
         futures::stream::iter(instances)
             .map(|(group, tic)| {
                 let app_name = group.app_name.clone();
@@ -117,7 +96,7 @@ async fn run_local(
                         // no retrying for bundled tests yet
                         run_gtest(tic.instantiate(), &app_name, report).await
                     } else {
-                        for _ in 0..=n_retries {
+                        for _ in 0..=run_args.repeat_if_failed {
                             let instance = tic.instantiate();
                             let result = instance.run_async(timeout).await;
                             report.lock().unwrap().add(&app_name, instance, &result);
@@ -241,7 +220,7 @@ async fn run_report_xge(
     test_groups: Vec<TestGroup>,
     input_paths: &config::InputPaths,
     output_paths: &OutputPaths,
-    run_config: &RunConfig,
+    run_args: &crate::RunArgs,
 ) -> Result<bool> {
     let mut report = report::Report::new(
         &output_paths.out_dir,
@@ -249,14 +228,14 @@ async fn run_report_xge(
             .testcases_dir
             .to_str()
             .expect("Couldn't convert path to string!"),
-        run_config.verbose,
+        run_args.verbose,
     )?;
-    Ok(run_xge(test_groups, run_config, &mut report, false).await)
+    Ok(run_xge(test_groups, run_args, &mut report, false).await)
 }
 
 async fn run_xge(
     test_groups: Vec<TestGroup>,
-    run_config: &RunConfig,
+    run_args: &crate::RunArgs,
     report: &mut dyn Reportable,
     mock: bool,
 ) -> bool {
@@ -264,20 +243,16 @@ async fn run_xge(
         let (c, s) = xge_lib::xge_mock().await;
         (c, Box::new(s.expect("remote client failed to connect")))
     } else {
-        let (c, s) = xge_lib::xge().await;
+        let (c, s) = xge_lib::xge(!run_args.no_monitor).await;
         (c, Box::new(s.expect("remote client failed to connect")))
     };
     let mut reader =
         tokio::io::BufReader::new(child.stdout.take().expect("failed to connect to stdout"))
             .lines();
-    let (repeat, repeat_if_failed) = match run_config.repeat {
-        RepeatStrategy::Repeat(repeat) => (repeat, 0),
-        RepeatStrategy::RepeatIfFailed(repeat_if_failed) => (1, repeat_if_failed),
-    };
     let n_tests: usize = test_groups.iter().map(|g| g.tests.len()).sum();
-    report.expect_additional_tests(repeat * n_tests);
+    report.expect_additional_tests(run_args.repeat * n_tests);
 
-    let queue = Mutex::new(TestQueue::new(test_groups, repeat));
+    let queue = Mutex::new(TestQueue::new(test_groups, run_args.repeat));
     let mut done = false;
     let mut overall_success = true;
     while !done {
@@ -299,7 +274,7 @@ async fn run_xge(
                     queue.lock().unwrap().return_response(
                         stream_result.id as usize,
                         success,
-                        repeat_if_failed,
+                        run_args.repeat_if_failed,
                     )
                 };
                 overall_success &= success;
