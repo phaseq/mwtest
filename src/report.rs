@@ -187,6 +187,7 @@ impl XmlReport {
                 self.write_artifact(out, &abs_reference_path, &abs_artifact_path)?;
             } else {
                 let abs_artifact_dir = abs_artifact_path.parent().unwrap();
+                let abs_reference_dir = abs_reference_path.parent().unwrap();
                 if std::fs::read_dir(tmp_path)?.next().is_some() {
                     std::fs::create_dir_all(&abs_artifact_dir)?;
                 }
@@ -195,7 +196,8 @@ impl XmlReport {
                     let file_name = &from.file_name().unwrap();
                     let to = abs_artifact_dir.join(file_name);
                     std::fs::rename(&from, &to)?;
-                    self.write_artifact(out, &abs_reference_path, &abs_artifact_dir)?;
+                    let reference = abs_reference_dir.join(to.file_name().unwrap());
+                    self.write_artifact(out, &reference, &to)?;
                 }
                 std::fs::remove_dir(tmp_path)?;
             }
@@ -360,7 +362,11 @@ impl CliLogger {
         }
 
         if all_succeeded && none_instable {
-            println!("All tests succeeded!");
+            if self.run_counts.is_empty() {
+                println!("WARNING: no tests selected.")
+            } else {
+                println!("All tests succeeded!");
+            }
         }
 
         all_succeeded

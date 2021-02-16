@@ -253,6 +253,10 @@ async fn run_xge(
     report.expect_additional_tests(run_args.repeat * n_tests);
 
     let queue = Mutex::new(TestQueue::new(test_groups, run_args.repeat));
+    if queue.lock().unwrap().is_done() {
+        return true; // no tests selected
+    }
+
     let mut done = false;
     let mut overall_success = true;
     while !done {

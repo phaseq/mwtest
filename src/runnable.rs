@@ -120,28 +120,15 @@ pub struct TestInstance {
 
 impl TestInstance {
     pub async fn run_async(&self, timeout: Option<std::time::Duration>) -> TestCommandResult {
-        let output_future = Command::new(&self.command.command[0])
+        let child = Command::new(&self.command.command[0])
             .args(self.command.command[1..].iter())
             .current_dir(&self.command.cwd)
             .kill_on_drop(true)
-            .output();
-        let output = match timeout {
-            Some(timeout) => match tokio::time::timeout(timeout, output_future).await {
-                Ok(output) => output,
-                Err(_) => {
-                    return TestCommandResult {
-                        exit_code: 1,
-                        stdout: format!(
-                            "[mwtest] terminated because {} second timeout was reached!",
-                            timeout.as_secs()
-                        ),
-                    };
-                }
-            },
-            None => output_future.await,
-        };
-        let output = match output {
-            Ok(output) => output,
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(child) => child,
             Err(e) => {
                 return TestCommandResult {
                     exit_code: 1,
@@ -152,11 +139,70 @@ impl TestInstance {
                 };
             }
         };
+
+        // TODO: instead of reading lines of strings: should we read buffers of bytes, to guard against encoding errors?
+        use tokio::io::AsyncBufReadExt;
+        let stdout = child.stdout.take().unwrap();
+        let stdout = tokio::io::BufReader::new(stdout);
+        let stdout = stdout.lines();
+        let stderr = child.stderr.take().unwrap();
+        let stderr = tokio::io::BufReader::new(stderr);
+        let stderr = stderr.lines();
+
+        let status;
+        let mut output_text = String::new();
+
+        let timeout = timeout.unwrap_or_else(|| std::time::Duration::from_secs(356 * 24 * 60 * 60)); // TODO: more elegant solution for no_timeout?
+        let timeout_future = tokio::time::sleep(timeout);
+        tokio::pin!(timeout_future);
+        tokio::pin!(stdout);
+        tokio::pin!(stderr);
+        loop {
+            tokio::select! {
+                line = stdout.next_line() => {
+                    if let Ok(Some(line)) = line {
+                        output_text.push_str(&line);
+                        output_text.push('\n');
+                    }
+                },
+                line = stderr.next_line() => {
+                    if let Ok(Some(line)) = line {
+                        output_text.push_str(&line);
+                        output_text.push('\n');
+                    }
+                },
+                // TODO: do we have to read lines after wait() or timeout finishes?
+                output = child.wait() => {
+                    status = output.map(|o| (o.success(), o.code()));
+                    break;
+                },
+                _ = &mut timeout_future => {
+                    child.kill().await.unwrap(); // TODO: when does this fail?
+                    status = Ok((false, None));
+                    output_text.push_str(&format!(
+                        "[mwtest] terminated because {} second timeout was reached!",
+                        timeout.as_secs()
+                    ));
+                    break;
+                }
+            }
+        }
+
+        let status = match status {
+            Ok(status) => status,
+            Err(e) => {
+                return TestCommandResult {
+                    exit_code: 1,
+                    stdout: format!(
+                        "[mwtest] error while trying to start test: {}",
+                        e.to_string()
+                    ),
+                }
+            }
+        };
+
         let tmp_path = self.command.tmp_path.clone();
-        let exit_code = output.status.code().unwrap_or(-7787);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let output_str = stderr + stdout;
+        let exit_code = status.1.unwrap_or(-7787);
 
         // cleanup
         if let Some(tmp_path) = tmp_path {
@@ -166,7 +212,7 @@ impl TestInstance {
         }
         TestCommandResult {
             exit_code,
-            stdout: output_str.to_string(),
+            stdout: output_text,
         }
     }
 }
