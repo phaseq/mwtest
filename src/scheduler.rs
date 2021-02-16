@@ -4,7 +4,6 @@ use crate::report::Reportable;
 #[cfg(test)]
 use crate::runnable::{ExecutionStyle, TestCommand};
 use crate::runnable::{TestCommandResult, TestGroup, TestInstance, TestInstanceCreator};
-use crate::OutputPaths;
 use color_eyre::eyre::Result;
 use futures::prelude::*;
 use futures::select;
@@ -20,33 +19,22 @@ pub fn run(
     run_args: &crate::RunArgs,
 ) -> Result<bool> {
     let runtime = tokio::runtime::Runtime::new().expect("Unable to create tokio runtime!");
-    if run_args.xge {
-        runtime.block_on(async {
-            run_report_xge(test_groups, &input_paths, &output_paths, &run_args).await
-            //.unwrap_or(false)
-        })
-    } else {
-        runtime.block_on(async {
-            run_report_local(test_groups, &input_paths, &output_paths, &run_args).await
-        })
-    }
-}
-
-async fn run_report_local(
-    test_groups: Vec<TestGroup>,
-    input_paths: &config::InputPaths,
-    output_paths: &OutputPaths,
-    run_args: &crate::RunArgs,
-) -> Result<bool> {
-    let report = Arc::new(Mutex::new(report::Report::new(
+    let mut report = report::Report::new(
         &output_paths.out_dir,
         input_paths
             .testcases_dir
             .to_str()
             .expect("Couldn't convert path to string!"),
         run_args.verbose,
-    )?));
-    Ok(run_local(test_groups, run_args, report).await)
+    )?;
+
+    if run_args.xge {
+        runtime.block_on(async { Ok(run_xge(test_groups, run_args, &mut report, false).await) })
+    } else {
+        runtime.block_on(async {
+            Ok(run_local(test_groups, run_args, Arc::new(Mutex::new(report))).await)
+        })
+    }
 }
 
 async fn run_local(
@@ -86,7 +74,7 @@ async fn run_local(
         let instances = tests
             .iter()
             .flat_map(|(group, tic)| (0..run_args.repeat).map(move |_| (group, tic)));
-        futures::stream::iter(instances)
+        let mut result_stream = futures::stream::iter(instances)
             .map(|(group, tic)| {
                 let app_name = group.app_name.clone();
                 let timeout = group.get_timeout_duration();
@@ -94,7 +82,7 @@ async fn run_local(
                 async move {
                     if tic.is_g_multitest {
                         // no retrying for bundled tests yet
-                        run_gtest(tic.instantiate(), &app_name, report).await
+                        run_gtest(tic.instantiate(), &app_name, report, run_args.fail_fast).await
                     } else {
                         for _ in 0..=run_args.repeat_if_failed {
                             let instance = tic.instantiate();
@@ -110,15 +98,25 @@ async fn run_local(
                     }
                 }
             })
-            .buffer_unordered(n_workers)
-            .fold(true, |overall_success, success| {
-                future::ready(overall_success && success)
-            })
-            .await
+            .buffer_unordered(n_workers);
+
+        let mut overall_success = true;
+        while let Some(success) = result_stream.next().await {
+            overall_success &= success;
+            if !success && run_args.fail_fast {
+                break;
+            }
+        }
+        overall_success
     }
 }
 
-async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Reportable>>) -> bool {
+async fn run_gtest(
+    ti: TestInstance,
+    app_name: &str,
+    report: Arc<Mutex<dyn Reportable>>,
+    fail_fast: bool,
+) -> bool {
     let mut child: tokio::process::Child = Command::new(&ti.command.command[0])
         .args(ti.command.command[1..].iter())
         .current_dir(&ti.command.cwd)
@@ -189,7 +187,10 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
             // [  FAILED  ] RunLocal_OpenGLWrapper.GetVersionTwoContexts (0 ms)
             else if line.starts_with("[  FAILED  ]") {
                 success = Some(false);
-                any_failed = false;
+                any_failed = true;
+                if fail_fast {
+                    break;
+                }
             }
             if let Some(success) = success {
                 let test_id = crate::TestId {
@@ -214,23 +215,6 @@ async fn run_gtest(ti: TestInstance, app_name: &str, report: Arc<Mutex<dyn Repor
         }
     }
     any_failed
-}
-
-async fn run_report_xge(
-    test_groups: Vec<TestGroup>,
-    input_paths: &config::InputPaths,
-    output_paths: &OutputPaths,
-    run_args: &crate::RunArgs,
-) -> Result<bool> {
-    let mut report = report::Report::new(
-        &output_paths.out_dir,
-        input_paths
-            .testcases_dir
-            .to_str()
-            .expect("Couldn't convert path to string!"),
-        run_args.verbose,
-    )?;
-    Ok(run_xge(test_groups, run_args, &mut report, false).await)
 }
 
 async fn run_xge(
@@ -284,6 +268,9 @@ async fn run_xge(
                 overall_success &= success;
                 report.add(&group.app_name, test_instance, &result);
                 done = is_done;
+                if !success && run_args.fail_fast {
+                    done = true;
+                }
             }
         }));
 

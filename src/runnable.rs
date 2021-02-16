@@ -8,7 +8,7 @@ pub fn create_run_commands(
     input_paths: &config::InputPaths,
     test_apps: &[crate::AppWithTests],
     output_paths: &crate::OutputPaths,
-    no_timeout: bool,
+    run_args: &crate::RunArgs,
 ) -> Vec<TestGroup> {
     let mut tests: Vec<TestGroup> = Vec::new();
     for app in test_apps {
@@ -21,10 +21,15 @@ pub fn create_run_commands(
                     "Invalid execution style! Only 'singlethreaded', 'parallel', 'xge' allowed."
                 ),
             };
-            let timeout = if no_timeout {
+            let timeout = if run_args.no_timeout {
                 None
+            } else if let Some(timeout) = run_args.timeout {
+                Some(timeout)
             } else {
-                group.test_group.timeout
+                group
+                    .test_group
+                    .timeout
+                    .map(|t| t * run_args.timeout_factor)
             };
 
             let gtest_generator = match &group.test_filter {

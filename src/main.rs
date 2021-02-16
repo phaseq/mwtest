@@ -149,9 +149,12 @@ pub struct RunArgs {
     #[structopt(long)]
     no_timeout: bool,
 
-    /// Multiply all timeouts by this factor.
     #[structopt(long)]
-    timeout_factor: Option<f64>,
+    timeout: Option<f32>,
+
+    /// Multiply all timeouts by this factor.
+    #[structopt(long, default_value = "1")]
+    timeout_factor: f32,
 
     /// Test ids named in this file are never run. The format is the same that is printed by "mwtest list".
     /// Lines that begin with '#' are comments.
@@ -168,7 +171,19 @@ pub struct RunArgs {
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let args = Args::from_args();
+    let mut args = vec![];
+    let mut extra_args = vec![]; // TODO: handle extra args
+    let mut in_extra_args = false;
+    for arg in std::env::args() {
+        if arg == "--" {
+            in_extra_args = true;
+        } else if in_extra_args {
+            extra_args.push(arg);
+        } else {
+            args.push(arg);
+        }
+    }
+    let args = Args::from_iter(args);
 
     let input_paths = config::InputPaths::from(
         args.dev_dir,
@@ -221,7 +236,8 @@ fn main() -> Result<()> {
                 out_dir: out_dir.clone(),
                 tmp_dir: out_dir.join("tmp"),
             };
-            let success = cmd_run(&input_paths, &app_tests, &output_paths, &run_args)?;
+            let success = cmd_run(&input_paths, &app_tests, &output_paths, &run_args)?
+                || run_args.treat_completion_as_success;
             if !success {
                 std::process::exit(-1)
             }
@@ -246,7 +262,10 @@ fn main() -> Result<()> {
                 for test in &app.tests {
                     for group in &test.groups {
                         if let Some(expr) = &group.find_glob {
-                            paths.push(expr.split('*').next().unwrap().to_string());
+                            let path = expr.split('*').next().unwrap();
+                            // TODO: handle checkout_parent
+                            // TODO: handle filter/id set
+                            paths.push(path.to_string());
                         }
                         for path in &group.testcases_dependencies {
                             paths.push(path.to_string());
@@ -425,8 +444,7 @@ fn cmd_run(
         output_paths.out_dir.to_str().unwrap()
     );
 
-    let tests =
-        runnable::create_run_commands(&input_paths, &test_apps, &output_paths, run_args.no_timeout);
+    let tests = runnable::create_run_commands(&input_paths, &test_apps, &output_paths, &run_args);
     if tests.is_empty() {
         println!("WARNING: No tests were selected.");
         std::process::exit(0); // counts as success

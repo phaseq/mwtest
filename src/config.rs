@@ -78,6 +78,7 @@ pub struct App {
     pub build: Build,
     pub tests: Vec<TestPreset>,
     pub globber_matches_parent: bool,
+    pub checkout_parent: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -164,7 +165,7 @@ impl AppConfig {
         let build_type: &str = match &input_paths.build_type {
             Some(b) => b,
             None => {
-                println!("Please specify --build-type :)");
+                println!("Please specify --build-type");
                 std::process::exit(-1);
             }
         };
@@ -190,6 +191,7 @@ impl AppConfig {
             build,
             tests,
             self.globber_matches_parent,
+            self.checkout_parent,
             &self.accepted_returncodes,
         )))
     }
@@ -203,6 +205,7 @@ impl App {
         build: Build,
         tests: Vec<TestPresetConfig>,
         globber_matches_parent: bool,
+        checkout_parent: bool,
         accepted_returncodes: &[i32],
     ) -> Self {
         let patterns = [
@@ -254,6 +257,7 @@ impl App {
             build,
             tests,
             globber_matches_parent,
+            checkout_parent,
         }
     }
 }
