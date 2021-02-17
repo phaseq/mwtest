@@ -52,7 +52,13 @@ pub fn create_run_commands(
             let changed_paths = run_args
                 .run_only_changed_file
                 .as_ref()
-                .map(|path| extract_changed_paths(&path));
+                .map(|path| load_paths_from_file(&path));
+
+            let excluded_paths = group
+                .test_group
+                .exclusion_list
+                .as_ref()
+                .map(|path| load_paths_from_file(&path));
 
             let mut test_generators = Vec::new();
             for test_id in &group.test_ids {
@@ -60,11 +66,23 @@ pub fn create_run_commands(
                     if let Some(rel_path) = &test_id.rel_path {
                         let rel_path = rel_path.to_str().unwrap().replace('\\', "/");
                         if !changed_paths.iter().any(|p| p.ends_with(&rel_path)) {
-                            // File was not changed. This only works for tests with only one input file. TODO: connect this with checkout logic (that should tell us which files affect things)
+                            // File was not changed. This only works for tests with only one input file.
+                            // TODO: connect this with checkout logic (that should tell us which files affect things)
                             continue;
                         }
                     } else {
                         continue; // Skip non-file-based tests.
+                    }
+                }
+                if let Some(excluded_paths) = &excluded_paths {
+                    if let Some(rel_path) = &test_id.rel_path {
+                        let rel_path = rel_path.to_str().unwrap().replace('\\', "/");
+                        if excluded_paths.iter().any(|p| p.ends_with(&rel_path)) {
+                            // This only works for tests with only one input file.
+                            // TODO: connect this with checkout logic (that should tell us which files affect things)
+                            // TODO: deprecate this functionality and replace it with a global exclusion file
+                            continue;
+                        }
                     }
                 }
                 let (input_str, cwd) = test_id_to_input(&test_id, &input_paths, &app.app);
@@ -101,7 +119,7 @@ pub fn create_run_commands(
     tests
 }
 
-fn extract_changed_paths(run_only_changed_file: &str) -> Vec<String> {
+fn load_paths_from_file(run_only_changed_file: &str) -> Vec<String> {
     use color_eyre::eyre::WrapErr;
     let content = std::fs::read_to_string(run_only_changed_file)
         .wrap_err("while trying to read run_only_changed_file")

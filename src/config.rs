@@ -34,7 +34,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub checkout_parent: bool,
     #[serde(default = "default_true")]
-    pub supports_gtest_batching: bool, // TODO
+    pub supports_gtest_batching: bool,
     pub env_path: Option<String>, // TODO
 }
 
@@ -70,7 +70,7 @@ pub struct TestGroupConfig {
     pub testcases_dependencies: Vec<String>,
     #[serde(default = "value_xge")]
     pub execution_style: String,
-    pub exclusion_list: Option<String>, // TODO
+    pub exclusion_list: Option<String>,
 }
 
 #[derive(Debug)]
@@ -111,6 +111,7 @@ pub struct TestGroup {
     pub accepted_returncodes: Vec<i32>,
     pub testcases_dependencies: Vec<String>,
     pub execution_style: String,
+    pub exclusion_list: Option<String>,
 }
 
 impl AppsConfig {
@@ -235,6 +236,7 @@ impl App {
                             accepted_returncodes: app_config.accepted_returncodes.to_vec(),
                             testcases_dependencies: g.testcases_dependencies,
                             execution_style: g.execution_style,
+                            exclusion_list: g.exclusion_list,
                         }
                     })
                     .collect();

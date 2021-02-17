@@ -291,6 +291,9 @@ fn main() -> Result<()> {
                         for path in &group.testcases_dependencies {
                             paths.push(path.to_string());
                         }
+                        if let Some(exclusion_list) = &group.exclusion_list {
+                            paths.push(exclusion_list.to_string());
+                        }
                     }
                 }
             }
