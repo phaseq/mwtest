@@ -102,7 +102,7 @@ pub struct TestGroup {
     pub find_glob: Option<String>,
     pub find_gtest: Option<String>,
     pub timeout: Option<f32>,
-    pub timeout_if_changed: Option<f32>, // TODO
+    pub timeout_if_changed: Option<f32>,
     pub accepted_returncodes: Vec<i32>,
     pub testcases_dependencies: Vec<String>,
     pub execution_style: String,

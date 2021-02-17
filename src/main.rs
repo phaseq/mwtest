@@ -273,11 +273,17 @@ fn main() -> Result<()> {
                             } else {
                                 // reconstruct paths by filling the id into the id_pattern
                                 for id in &id {
-                                    let path = test
+                                    let mut path = test
                                         .id_pattern
                                         .as_ref()
                                         .map(|p| p.replace("(.*)", &id))
                                         .unwrap_or_else(|| id.to_string());
+                                    if app.checkout_parent {
+                                        path = relative_path::RelativePath::new(&path)
+                                            .parent()
+                                            .unwrap()
+                                            .to_string();
+                                    }
                                     paths.push(path);
                                 }
                             }
