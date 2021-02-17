@@ -208,7 +208,12 @@ fn main() -> Result<()> {
         SubCommands::List { app_names, filter } => {
             if !app_names.is_empty() {
                 let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
-                let app_tests = generate_app_tests(&filter, &[], &input_paths, &apps, false);
+                let filter_args = FilterArgs {
+                    filter: &filter,
+                    ids: &[],
+                    exclusion_file: &None, // TODO
+                };
+                let app_tests = generate_app_tests(&filter_args, &input_paths, &apps, false);
                 cmd_list_tests(&app_tests);
             } else {
                 cmd_list_apps(&apps_config);
@@ -221,13 +226,13 @@ fn main() -> Result<()> {
                 && run_args.parallel.is_none()
                 && !run_args.xge
                 && run_args.repeat_if_failed == 0;
-            let app_tests = generate_app_tests(
-                &run_args.filter,
-                &run_args.id,
-                &input_paths,
-                &apps,
-                can_run_raw_gtest,
-            );
+            let filter_args = FilterArgs {
+                filter: &run_args.filter,
+                ids: &run_args.id,
+                exclusion_file: &run_args.exclusion_file,
+            };
+            let app_tests =
+                generate_app_tests(&filter_args, &input_paths, &apps, can_run_raw_gtest);
             let out_dir = args
                 .output_dir
                 .map(PathBuf::from)
@@ -564,14 +569,18 @@ pub struct OutputPaths {
     tmp_dir: PathBuf,
 }
 
+struct FilterArgs<'a> {
+    filter: &'a [String],
+    ids: &'a [String],
+    exclusion_file: &'a Option<String>,
+}
 fn generate_app_tests(
-    filter: &[String],
-    id: &[String],
+    filter_args: &FilterArgs,
     input_paths: &config::InputPaths,
     apps_config: &config::Apps,
     can_run_raw_gtest: bool,
 ) -> Vec<AppWithTests> {
-    let id_filter = id_filter_from_args(filter, id);
+    let id_filter = id_filter_from_args(&filter_args).unwrap();
     let apps: Vec<AppWithTests> = apps_config
         .0
         .iter()
@@ -618,16 +627,50 @@ fn generate_app_tests(
     apps
 }
 
-fn id_filter_from_args<'a>(filter: &'a [String], id: &'a [String]) -> impl Fn(&str) -> bool + 'a {
+fn id_filter_from_args<'a>(
+    filter_args: &'a FilterArgs<'a>,
+) -> Result<Box<dyn Fn(&str) -> bool + 'a>> {
     let normalize = |input: &str| input.to_lowercase().replace('\\', "/");
-    Box::new(move |input: &str| {
+    let exclusion_filter =
+        id_filter_from_exclusion_file(&filter_args).wrap_err("while loading exclusion file")?;
+    Ok(Box::new(move |input: &str| {
         let input = normalize(input);
-        if !filter.is_empty() {
-            filter.iter().any(|f| input.contains(normalize(f).as_str()))
-        } else if !id.is_empty() {
-            id.iter().any(|i| normalize(i) == input)
+        if !exclusion_filter(&input) {
+            return false;
+        }
+        if !filter_args.filter.is_empty() {
+            filter_args
+                .filter
+                .iter()
+                .any(|f| input.contains(normalize(f).as_str()))
+        } else if !filter_args.ids.is_empty() {
+            filter_args.ids.iter().any(|i| normalize(i) == input)
         } else {
             true
         }
-    })
+    }))
+}
+
+fn id_filter_from_exclusion_file(run_args: &FilterArgs) -> Result<Box<dyn Fn(&str) -> bool>> {
+    if let Some(exclusion_file) = run_args.exclusion_file {
+        let mut excluded = vec![];
+        let content = std::fs::read_to_string(exclusion_file)?;
+        for line in content.lines() {
+            let mut tokens = line.split(" --id ");
+            match (tokens.next(), tokens.next()) {
+                (Some(app), Some(id)) => {
+                    excluded.push((
+                        app.trim().to_string(),
+                        id.trim().trim_matches('"').to_string(),
+                    ));
+                }
+                _ => {} // ignore
+            }
+        }
+        Ok(Box::new(move |input: &str| {
+            !excluded.iter().any(|(_app, id)| id == input)
+        }))
+    } else {
+        Ok(Box::new(move |_input: &str| true))
+    }
 }
