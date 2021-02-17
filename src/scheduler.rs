@@ -4,9 +4,8 @@ use crate::report::Reportable;
 #[cfg(test)]
 use crate::runnable::{ExecutionStyle, TestCommand};
 use crate::runnable::{TestCommandResult, TestGroup, TestInstance, TestInstanceCreator};
-use color_eyre::eyre::Result;
 use futures::prelude::*;
-use futures::select;
+use simple_eyre::eyre::Result;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -158,7 +157,7 @@ async fn run_gtest(
 
         let (n_read, pipe) = match (stdout.active, stderr.active) {
             (true, true) => {
-                select! {
+                tokio::select! {
                     n_read = stdout_fut => (n_read.unwrap(), &mut stdout),
                     n_read = stderr_fut => (n_read.unwrap(), &mut stderr),
                 }
@@ -283,9 +282,9 @@ async fn run_xge(
                 tokio::pin!(send_future);
 
                 loop {
-                    select! {
-                        _ = send_future => break,
-                        _ = line => {}
+                    tokio::select! {
+                        _ = &mut send_future => break,
+                        _ = &mut line => {}
                     };
                 }
             }

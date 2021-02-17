@@ -1,6 +1,6 @@
-use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use relative_path::{RelativePath, RelativePathBuf};
 use serde::Deserialize;
+use simple_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -890,8 +890,8 @@ fn svn(args: &[&str], wd: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use color_eyre::eyre::Result;
     use serial_test::serial;
+    use simple_eyre::eyre::Result;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 

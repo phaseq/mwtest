@@ -1,5 +1,5 @@
 use crate::runnable;
-use color_eyre::eyre::{Result, WrapErr};
+use simple_eyre::eyre::{Result, WrapErr};
 use std::collections::{hash_map, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Write};

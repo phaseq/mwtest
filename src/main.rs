@@ -4,7 +4,7 @@ mod runnable;
 mod scheduler;
 mod svn;
 
-use color_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
+use simple_eyre::eyre::{eyre, ContextCompat, Result, WrapErr};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -169,7 +169,7 @@ pub struct RunArgs {
 }
 
 fn main() -> Result<()> {
-    color_eyre::install()?;
+    simple_eyre::install()?;
 
     let mut args = vec![];
     let mut extra_args = vec![]; // TODO: handle extra args

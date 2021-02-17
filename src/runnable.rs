@@ -120,7 +120,7 @@ pub fn create_run_commands(
 }
 
 fn load_paths_from_file(run_only_changed_file: &str) -> Vec<String> {
-    use color_eyre::eyre::WrapErr;
+    use simple_eyre::eyre::WrapErr;
     let content = std::fs::read_to_string(run_only_changed_file)
         .wrap_err("while trying to read run_only_changed_file")
         .unwrap();

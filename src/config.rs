@@ -1,5 +1,5 @@
-use color_eyre::eyre::{eyre, ContextCompat, Result};
 use serde::Deserialize;
+use simple_eyre::eyre::{eyre, ContextCompat, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufRead;
