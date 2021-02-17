@@ -78,9 +78,9 @@ enum SubCommands {
         #[structopt(long)]
         minimal: bool,
 
-        /// the test id you want to check out
-        //#[structopt(long)]
-        //id: Option<String>,
+        /// the test ids you want to check out
+        #[structopt(long)]
+        id: Vec<String>,
 
         /// the test id you want to check out
         //#[structopt(long)]
@@ -249,23 +249,33 @@ fn main() -> Result<()> {
             app_names,
             force,
             minimal,
-            //id,
+            id,
             //filter,
             revision,
             branch,
         } => {
             let apps = apps_config.select_build_and_preset(&app_names, &input_paths)?;
-            //let id_filter = id_filter_from_args(filter, id);
 
             let mut paths: Vec<String> = vec![];
             for app in apps.0.values() {
                 for test in &app.tests {
                     for group in &test.groups {
                         if let Some(expr) = &group.find_glob {
-                            let path = expr.split('*').next().unwrap();
-                            // TODO: handle checkout_parent
-                            // TODO: handle filter/id set
-                            paths.push(path.to_string());
+                            if id.is_empty() {
+                                // check out all test files
+                                let path = expr.split('*').next().unwrap();
+                                paths.push(path.to_string());
+                            } else {
+                                // reconstruct paths by filling the id into the id_pattern
+                                for id in &id {
+                                    let path = test
+                                        .id_pattern
+                                        .as_ref()
+                                        .map(|p| p.replace("(.*)", &id))
+                                        .unwrap_or_else(|| id.to_string());
+                                    paths.push(path);
+                                }
+                            }
                         }
                         for path in &group.testcases_dependencies {
                             paths.push(path.to_string());
