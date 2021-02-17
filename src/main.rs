@@ -600,7 +600,7 @@ fn generate_app_tests(
                         .groups
                         .iter()
                         .map(|test_group| {
-                            let test_filter = if can_run_raw_gtest {
+                            let test_filter = if can_run_raw_gtest && app.supports_gtest_batching {
                                 test_group.find_gtest.clone()
                             } else {
                                 None

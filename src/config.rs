@@ -32,7 +32,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub globber_matches_parent: bool,
     #[serde(default)]
-    pub checkout_parent: bool, // TODO
+    pub checkout_parent: bool,
+    #[serde(default = "default_true")]
+    pub supports_gtest_batching: bool, // TODO
+    pub env_path: Option<String>, // TODO
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -62,11 +65,12 @@ pub struct TestGroupConfig {
     pub find_glob: Option<String>,
     pub find_gtest: Option<String>,
     pub timeout: Option<f32>,
-    pub timeout_if_changed: Option<f32>, // TODO
+    pub timeout_if_changed: Option<f32>,
     #[serde(default)]
     pub testcases_dependencies: Vec<String>,
     #[serde(default = "value_xge")]
     pub execution_style: String,
+    pub exclusion_list: Option<String>, // TODO
 }
 
 #[derive(Debug)]
@@ -79,6 +83,7 @@ pub struct App {
     pub tests: Vec<TestPreset>,
     pub globber_matches_parent: bool,
     pub checkout_parent: bool,
+    pub supports_gtest_batching: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -184,29 +189,16 @@ impl AppConfig {
             .filter_map(|p| self.tests.get(p))
             .cloned()
             .collect();
-        Ok(Some(App::from(
-            input_paths,
-            self.command,
-            self.responsible,
-            build,
-            tests,
-            self.globber_matches_parent,
-            self.checkout_parent,
-            &self.accepted_returncodes,
-        )))
+        Ok(Some(App::from(self, input_paths, build, tests)))
     }
 }
 
 impl App {
     fn from(
+        app_config: AppConfig,
         input_paths: &InputPaths,
-        command: CommandTemplate,
-        responsible: String,
         build: Build,
         tests: Vec<TestPresetConfig>,
-        globber_matches_parent: bool,
-        checkout_parent: bool,
-        accepted_returncodes: &[i32],
     ) -> Self {
         let patterns = [
             ("{{exe}}", Some(&build.exe)),
@@ -215,7 +207,7 @@ impl App {
         let tests = tests
             .into_iter()
             .map(|p| {
-                let command = p.command.unwrap_or_else(|| command.clone());
+                let command = p.command.unwrap_or_else(|| app_config.command.clone());
 
                 let groups = p
                     .groups
@@ -240,7 +232,7 @@ impl App {
                             find_gtest: g.find_gtest,
                             timeout: g.timeout,
                             timeout_if_changed: g.timeout_if_changed,
-                            accepted_returncodes: accepted_returncodes.to_vec(),
+                            accepted_returncodes: app_config.accepted_returncodes.to_vec(),
                             testcases_dependencies: g.testcases_dependencies,
                             execution_style: g.execution_style,
                         }
@@ -253,11 +245,12 @@ impl App {
             })
             .collect();
         App {
-            responsible,
+            responsible: app_config.responsible,
             build,
             tests,
-            globber_matches_parent,
-            checkout_parent,
+            globber_matches_parent: app_config.globber_matches_parent,
+            checkout_parent: app_config.checkout_parent,
+            supports_gtest_batching: app_config.supports_gtest_batching,
         }
     }
 }
@@ -295,6 +288,9 @@ impl Build {
 
 fn default_retcodes() -> Vec<i32> {
     vec![0]
+}
+fn default_true() -> bool {
+    true
 }
 
 fn value_xge() -> String {
