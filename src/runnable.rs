@@ -195,14 +195,9 @@ impl TestInstance {
             }
         };
 
-        // TODO: instead of reading lines of strings: should we read buffers of bytes, to guard against encoding errors?
-        use tokio::io::AsyncBufReadExt;
+        use tokio::io::AsyncReadExt;
         let stdout = child.stdout.take().unwrap();
-        let stdout = tokio::io::BufReader::new(stdout);
-        let stdout = stdout.lines();
         let stderr = child.stderr.take().unwrap();
-        let stderr = tokio::io::BufReader::new(stderr);
-        let stderr = stderr.lines();
 
         let status;
         let mut output_text = String::new();
@@ -212,18 +207,19 @@ impl TestInstance {
         tokio::pin!(timeout_future);
         tokio::pin!(stdout);
         tokio::pin!(stderr);
+        let mut buf_out = [0; 1024];
+        let mut buf_err = [0; 1024];
+
         loop {
             tokio::select! {
-                line = stdout.next_line() => {
-                    if let Ok(Some(line)) = line {
-                        output_text.push_str(&line);
-                        output_text.push('\n');
+                n = stdout.read(&mut buf_out[..]) => {
+                    if let Ok(n) = n {
+                        output_text.push_str(&String::from_utf8_lossy(&buf_out[..n]));
                     }
                 },
-                line = stderr.next_line() => {
-                    if let Ok(Some(line)) = line {
-                        output_text.push_str(&line);
-                        output_text.push('\n');
+                n = stderr.read(&mut buf_err[..]) => {
+                    if let Ok(n) = n {
+                        output_text.push_str(&String::from_utf8_lossy(&buf_err[..n]));
                     }
                 },
                 // TODO: do we have to read lines after wait() or timeout finishes?
